@@ -14,10 +14,19 @@ app = modal.App(APP_NAME)
 
 hf_cache = modal.Volume.from_name("qwen35-ws3-cache", create_if_missing=True)
 
+FLASH_ATTN_WHEEL = (
+    "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/"
+    "flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp312-cp312-linux_x86_64.whl"
+)
+
 image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .apt_install("git")
-    .uv_pip_install(
+    modal.Image.from_registry("nvidia/cuda:12.8.0-devel-ubuntu22.04", add_python="3.12")
+    .apt_install("git", "build-essential", "ninja-build", "libz3-dev")
+    .pip_install(
+        "torch==2.8.0",
+        "torchvision",
+        "triton>=3.3.0",
+        "einops",
         "accelerate",
         "fastapi[standard]",
         "huggingface_hub[hf_transfer]",
@@ -25,18 +34,27 @@ image = (
         "pillow",
         "requests",
         "sentencepiece",
-        "torch",
-        "torchvision",
+        "ninja",
+        "packaging",
+        FLASH_ATTN_WHEEL,
         "transformers[serving] @ git+https://github.com/huggingface/transformers.git@main",
+    )
+    .run_commands(
+        "pip install -q --no-build-isolation 'causal_conv1d==1.6.0' flash-linear-attention",
     )
     .env(
         {
-            "HF_HUB_ENABLE_HF_TRANSFER": "1",
+            "HF_XET_HIGH_PERFORMANCE": "1",
             "HF_HOME": CACHE_DIR,
             "TRANSFORMERS_CACHE": CACHE_DIR,
         }
     )
 )
+
+with image.imports():
+    from huggingface_hub import hf_hub_download
+    from peft import PeftModel
+    from transformers import AutoModelForImageTextToText, AutoProcessor
 
 
 def _decode_image(image_base64: str):
@@ -62,7 +80,6 @@ def _load_image_url(image_url: str):
     return Image.open(io.BytesIO(response.content)).convert("RGB")
 
 
-
 DFK_INSTRUCTION = (
     "Anda adalah seorang analis konten media sosial ahli. "
     "Diberikan tangkapan layar dari sebuah unggahan media sosial dan metadata berupa "
@@ -71,10 +88,14 @@ DFK_INSTRUCTION = (
     "Jawab hanya dengan format: Label: <label> lalu Analisis: <analisis>."
 )
 
+CAPTIONING_INSTRUCTION = (
+    "Deskripsikan gambar ini secara detail dalam Bahasa Indonesia: "
+    "siapa yang ada, di mana lokasinya, apa yang sedang terjadi, "
+    "dan jika ada teks di gambar sebutkan isinya."
+)
+
 
 def build_dfk_content(
-    title: str = "",
-    context: str = "",
     ringkasan: str = "",
     klaim: str = "",
     fakta: str = "",
@@ -86,10 +107,6 @@ def build_dfk_content(
         context_parts.append(f"Klaim: {klaim.strip()}")
     if fakta.strip():
         context_parts.append(f"Fakta: {fakta.strip()}")
-    if title.strip():
-        context_parts.append(f"Judul: {title.strip()}")
-    if context.strip():
-        context_parts.append(f"Konteks: {context.strip()}")
 
     content = [{"type": "text", "text": DFK_INSTRUCTION}]
     if context_parts:
@@ -105,20 +122,17 @@ def build_dfk_content(
     timeout=600,
     scaledown_window=60,
     volumes={CACHE_DIR: hf_cache},
+    enable_memory_snapshot=True,
 )
+@modal.concurrent(max_inputs=2)
 class QwenServer:
-    @modal.enter()
-    def load_model(self):
+    @modal.enter(snap=True)
+    def load_to_cpu(self):
         import json
         import os
-
-        import torch
-        from huggingface_hub import hf_hub_download
-        from peft import PeftModel
-        from transformers import AutoModelForImageTextToText, AutoProcessor
+        from concurrent.futures import ThreadPoolExecutor
 
         token = os.environ.get("HF_TOKEN")
-        dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
 
         base_model_id = MODEL_ID
         adapter_model_id = None
@@ -137,20 +151,29 @@ class QwenServer:
         except Exception:
             pass
 
-        self.processor = AutoProcessor.from_pretrained(
-            base_model_id,
-            token=token,
-            trust_remote_code=True,
-            cache_dir=CACHE_DIR,
-        )
-        self.model = AutoModelForImageTextToText.from_pretrained(
-            base_model_id,
-            token=token,
-            trust_remote_code=True,
-            torch_dtype=dtype,
-            device_map="auto",
-            cache_dir=CACHE_DIR,
-        )
+        def load_processor():
+            return AutoProcessor.from_pretrained(
+                base_model_id,
+                token=token,
+                trust_remote_code=True,
+                cache_dir=CACHE_DIR,
+            )
+
+        def load_model():
+            return AutoModelForImageTextToText.from_pretrained(
+                base_model_id,
+                token=token,
+                trust_remote_code=True,
+                dtype="bfloat16",
+                device_map="cpu",
+                cache_dir=CACHE_DIR,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_processor = executor.submit(load_processor)
+            f_model = executor.submit(load_model)
+            self.processor = f_processor.result()
+            self.model = f_model.result()
 
         if adapter_model_id:
             self.model = PeftModel.from_pretrained(
@@ -162,46 +185,57 @@ class QwenServer:
 
         self.model.eval()
 
+    @modal.enter(snap=False)
+    def move_to_gpu(self):
+        import torch
+        self.model = self.model.to("cuda", dtype=torch.bfloat16)
+
     @modal.method()
     def generate(
         self,
         prompt: str | None = None,
         image_url: str | None = None,
         image_base64: str | None = None,
-        title: str = "",
-        context: str = "",
         ringkasan: str = "",
         klaim: str = "",
         fakta: str = "",
+        captioning: bool = False,
+        caption_prompt: str | None = None,
         max_new_tokens: int = 128,
-        temperature: float = 0.2,
-        top_p: float = 0.9,
+        temperature: float = 0.7,
+        top_p: float = 0.8,
+        top_k: int = 20,
+        min_p: float = 0.0,
+        repetition_penalty: float = 1.0,
     ) -> dict[str, Any]:
-        import torch
-
         if image_url and image_base64:
             raise ValueError("Provide either image_url or image_base64, not both.")
 
-        if prompt:
-            content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        pil_image = None
+        if image_url:
+            pil_image = _load_image_url(image_url)
+        elif image_base64:
+            pil_image = _decode_image(image_base64)
+
+        if captioning:
+            if pil_image is None:
+                return {"text": "Error: image_url or image_base64 is required for captioning."}
+            content: list[dict[str, Any]] = [
+                {"type": "text", "text": caption_prompt or CAPTIONING_INSTRUCTION},
+                {"type": "image"},
+            ]
+        elif prompt:
+            content = [{"type": "text", "text": prompt}]
+            if pil_image is not None:
+                content.append({"type": "image"})
         else:
             content = build_dfk_content(
-                title=title,
-                context=context,
                 ringkasan=ringkasan,
                 klaim=klaim,
                 fakta=fakta,
             )
-
-        images = None
-        if image_url:
-            image = _load_image_url(image_url)
-            content.append({"type": "image"})
-            images = [image]
-        elif image_base64:
-            image = _decode_image(image_base64)
-            content.append({"type": "image"})
-            images = [image]
+            if pil_image is not None:
+                content.append({"type": "image"})
 
         messages = [{"role": "user", "content": content}]
 
@@ -210,34 +244,41 @@ class QwenServer:
             add_generation_prompt=True,
             tokenize=False,
         )
+        images = [pil_image] if pil_image is not None else None
         inputs = self.processor(
             text=[text],
             images=images,
             return_tensors="pt",
-        ).to(self.model.device)
+        ).to(next(self.model.parameters()).device)
 
-        generation_kwargs = dict(
+        generation_kwargs: dict[str, Any] = dict(
             max_new_tokens=max_new_tokens,
             do_sample=temperature > 0,
+            repetition_penalty=repetition_penalty,
         )
         if temperature > 0:
             generation_kwargs["temperature"] = temperature
             generation_kwargs["top_p"] = top_p
+            generation_kwargs["top_k"] = top_k
+            if min_p > 0:
+                generation_kwargs["min_p"] = min_p
 
+        import torch
         with torch.inference_mode():
-            generated_ids = self.model.generate(
-                **inputs,
-                **generation_kwargs,
-            )
+            if captioning:
+                with self.model.disable_adapter():
+                    generated_ids = self.model.generate(**inputs, **generation_kwargs)
+            else:
+                generated_ids = self.model.generate(**inputs, **generation_kwargs)
 
-        new_token_ids = generated_ids[:, inputs["input_ids"].shape[-1] :]
+        new_token_ids = generated_ids[:, inputs["input_ids"].shape[-1]:]
         output = self.processor.batch_decode(
             new_token_ids,
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )[0]
 
-        return {"text": output.strip()}
+        return {"text": output.strip(), "tokens_generated": new_token_ids.shape[-1]}
 
 
 @app.function(image=image, timeout=600)
@@ -247,14 +288,17 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
         prompt=payload.get("prompt"),
         image_url=payload.get("image_url"),
         image_base64=payload.get("image_base64"),
-        title=str(payload.get("title") or ""),
-        context=str(payload.get("context") or payload.get("text") or ""),
         ringkasan=str(payload.get("ringkasan") or payload.get("summary") or ""),
         klaim=str(payload.get("klaim") or payload.get("claim") or ""),
         fakta=str(payload.get("fakta") or payload.get("fact") or ""),
+        captioning=bool(payload.get("captioning", False)),
+        caption_prompt=payload.get("caption_prompt") or None,
         max_new_tokens=int(payload.get("max_new_tokens", 128)),
-        temperature=float(payload.get("temperature", 0.2)),
-        top_p=float(payload.get("top_p", 0.9)),
+        temperature=float(payload.get("temperature", 0.7)),
+        top_p=float(payload.get("top_p", 0.8)),
+        top_k=int(payload.get("top_k", 20)),
+        min_p=float(payload.get("min_p", 0.0)),
+        repetition_penalty=float(payload.get("repetition_penalty", 1.0)),
     )
 
 
@@ -262,21 +306,21 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
 def main(
     prompt: str | None = None,
     image_url: str | None = None,
-    title: str = "",
-    context: str = "",
     ringkasan: str = "",
     klaim: str = "",
     fakta: str = "",
+    captioning: bool = False,
+    caption_prompt: str | None = None,
     max_new_tokens: int = 256,
 ):
     result = QwenServer().generate.remote(
         prompt=prompt,
         image_url=image_url,
-        title=title,
-        context=context,
         ringkasan=ringkasan,
         klaim=klaim,
         fakta=fakta,
+        captioning=captioning,
+        caption_prompt=caption_prompt,
         max_new_tokens=max_new_tokens,
     )
     print(result["text"])
