@@ -136,14 +136,34 @@ Optionally override the default captioning instruction:
 
 ## Generation Parameters
 
+All generation parameters are optional and apply to both DFK and captioning modes.
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `max_new_tokens` | 128 | Maximum tokens to generate |
-| `temperature` | 0.7 | Sampling temperature (0 = greedy) |
-| `top_p` | 0.8 | Nucleus sampling probability |
-| `top_k` | 20 | Top-k sampling |
-| `min_p` | 0.0 | Minimum probability threshold |
-| `repetition_penalty` | 1.0 | Penalize repeated tokens |
+| `temperature` | 0.0 | Sampling temperature. `0` = greedy/deterministic. Higher = more random |
+| `top_p` | 0.8 | Nucleus sampling — only sample from top tokens whose cumulative probability ≥ `top_p`. Active when `temperature > 0` |
+| `top_k` | 20 | Only sample from top-k most probable tokens. Active when `temperature > 0` |
+| `min_p` | 0.0 | Minimum probability threshold relative to top token. Active when `temperature > 0` and `min_p > 0` |
+| `repetition_penalty` | 1.0 | `1.0` = no penalty. `> 1.0` penalizes repeated tokens |
+
+**Example with custom generation params:**
+
+```json
+{
+  "ringkasan": "...",
+  "klaim": "...",
+  "fakta": "...",
+  "image_url": "https://...",
+  "max_new_tokens": 256,
+  "temperature": 0.7,
+  "top_p": 0.9,
+  "top_k": 50,
+  "repetition_penalty": 1.1
+}
+```
+
+> Note: `top_p`, `top_k`, and `min_p` are ignored when `temperature` is `0` (greedy decoding).
 
 ## Infrastructure
 

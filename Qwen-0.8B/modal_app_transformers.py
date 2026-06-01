@@ -36,6 +36,7 @@ image = (
         "sentencepiece",
         "ninja",
         "packaging",
+        "weave",
         FLASH_ATTN_WHEEL,
         "transformers[serving] @ git+https://github.com/huggingface/transformers.git@main",
     )
@@ -89,9 +90,8 @@ DFK_INSTRUCTION = (
 )
 
 CAPTIONING_INSTRUCTION = (
-    "Deskripsikan gambar ini secara detail dalam Bahasa Indonesia: "
-    "siapa yang ada, di mana lokasinya, apa yang sedang terjadi, "
-    "dan jika ada teks di gambar sebutkan isinya."
+    "Jika ada teks di gambar, kutip teksnya terlebih dahulu. "
+    "Kemudian deskripsikan isi gambar dalam satu paragraf menggunakan Bahasa Indonesia."
 )
 
 
@@ -123,6 +123,7 @@ def build_dfk_content(
     scaledown_window=60,
     volumes={CACHE_DIR: hf_cache},
     enable_memory_snapshot=True,
+    secrets=[modal.Secret.from_name("wandb-secret")],
 )
 @modal.concurrent(max_inputs=2)
 class QwenServer:
@@ -189,6 +190,13 @@ class QwenServer:
     def move_to_gpu(self):
         import torch
         self.model = self.model.to("cuda", dtype=torch.bfloat16)
+        try:
+            import weave
+            weave.init("Aitf-dfk-3/log-qwen")
+            self._weave = weave
+        except Exception as e:
+            print(f"[WEAVE] init failed: {e}")
+            self._weave = None
 
     @modal.method()
     def generate(
@@ -202,7 +210,7 @@ class QwenServer:
         captioning: bool = False,
         caption_prompt: str | None = None,
         max_new_tokens: int = 128,
-        temperature: float = 0.7,
+        temperature: float = 0.0,
         top_p: float = 0.8,
         top_k: int = 20,
         min_p: float = 0.0,
@@ -210,6 +218,10 @@ class QwenServer:
     ) -> dict[str, Any]:
         if image_url and image_base64:
             raise ValueError("Provide either image_url or image_base64, not both.")
+
+        mode = "captioning" if captioning else ("prompt" if prompt else "dfk")
+        img_ref = image_url or ("[base64]" if image_base64 else None)
+        print(f"[INPUT] mode={mode} image={img_ref} ringkasan={ringkasan!r} klaim={klaim!r} fakta={fakta!r} prompt={prompt!r} max_new_tokens={max_new_tokens} temperature={temperature}")
 
         pil_image = None
         if image_url:
@@ -221,8 +233,8 @@ class QwenServer:
             if pil_image is None:
                 return {"text": "Error: image_url or image_base64 is required for captioning."}
             content: list[dict[str, Any]] = [
-                {"type": "text", "text": caption_prompt or CAPTIONING_INSTRUCTION},
                 {"type": "image"},
+                {"type": "text", "text": caption_prompt or CAPTIONING_INSTRUCTION},
             ]
         elif prompt:
             content = [{"type": "text", "text": prompt}]
@@ -278,10 +290,32 @@ class QwenServer:
             clean_up_tokenization_spaces=False,
         )[0]
 
-        return {"text": output.strip(), "tokens_generated": new_token_ids.shape[-1]}
+        result_text = output.strip()
+        tokens = new_token_ids.shape[-1]
+        print(f"[OUTPUT] tokens={tokens} text={result_text!r}")
+
+        try:
+            if self._weave:
+                import weave as _weave
+                from datetime import datetime, timezone, timedelta
+                wib = timezone(timedelta(hours=7))
+                ts = datetime.now(wib).strftime("%Y-%m-%d %H:%M WIB")
+                @_weave.op(name=f"qwen35-ws3-generate | {ts}")
+                def _log(mode, image, ringkasan, klaim, fakta, prompt, max_new_tokens, temperature):
+                    return {"text": result_text, "tokens_generated": tokens}
+                _log(
+                    mode=mode, image=img_ref,
+                    ringkasan=ringkasan, klaim=klaim, fakta=fakta,
+                    prompt=prompt, max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                )
+        except Exception as e:
+            print(f"[WEAVE] log failed: {e}")
+
+        return {"text": result_text, "tokens_generated": tokens}
 
 
-@app.function(image=image, timeout=600)
+@app.function(image=image, timeout=600, secrets=[modal.Secret.from_name("wandb-secret")])
 @modal.fastapi_endpoint(method="POST", docs=True)
 def infer(payload: dict[str, Any]) -> dict[str, Any]:
     return QwenServer().generate.remote(
@@ -294,7 +328,7 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
         captioning=bool(payload.get("captioning", False)),
         caption_prompt=payload.get("caption_prompt") or None,
         max_new_tokens=int(payload.get("max_new_tokens", 128)),
-        temperature=float(payload.get("temperature", 0.7)),
+        temperature=float(payload.get("temperature", 0.0)),
         top_p=float(payload.get("top_p", 0.8)),
         top_k=int(payload.get("top_k", 20)),
         min_p=float(payload.get("min_p", 0.0)),
