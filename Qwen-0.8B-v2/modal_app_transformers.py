@@ -283,12 +283,35 @@ class QwenServer:
                 generation_kwargs["min_p"] = min_p
 
         import torch
+        import time
+
+        weave_call = None
+        try:
+            if self._weave:
+                import weave as _weave
+                from datetime import datetime, timezone, timedelta
+                wib = timezone(timedelta(hours=7))
+                ts = datetime.now(wib).strftime("%Y-%m-%d %H:%M WIB")
+                weave_call = _weave.create_call(
+                    f"qwen35-ws3-v2-generate | {ts}",
+                    inputs={
+                        "mode": mode, "image": img_ref,
+                        "ringkasan": ringkasan, "klaim": klaim, "fakta": fakta,
+                        "prompt": prompt, "max_new_tokens": max_new_tokens,
+                        "temperature": temperature,
+                    },
+                )
+        except Exception as e:
+            print(f"[WEAVE] create_call failed: {e}")
+
+        t0 = time.time()
         with torch.inference_mode():
             if captioning:
                 with self.model.disable_adapter():
                     generated_ids = self.model.generate(**inputs, **generation_kwargs)
             else:
                 generated_ids = self.model.generate(**inputs, **generation_kwargs)
+        elapsed_ms = int((time.time() - t0) * 1000)
 
         new_token_ids = generated_ids[:, inputs["input_ids"].shape[-1]:]
         output = self.processor.batch_decode(
@@ -299,25 +322,18 @@ class QwenServer:
 
         result_text = output.strip()
         tokens = new_token_ids.shape[-1]
-        print(f"[OUTPUT] tokens={tokens} text={result_text!r}")
+        print(f"[OUTPUT] tokens={tokens} elapsed_ms={elapsed_ms} text={result_text!r}")
 
         try:
-            if self._weave:
+            if self._weave and weave_call:
                 import weave as _weave
-                from datetime import datetime, timezone, timedelta
-                wib = timezone(timedelta(hours=7))
-                ts = datetime.now(wib).strftime("%Y-%m-%d %H:%M WIB")
-                @_weave.op(name=f"qwen35-ws3-v2-generate | {ts}")
-                def _log(mode, image, ringkasan, klaim, fakta, prompt, max_new_tokens, temperature):
-                    return {"text": result_text, "tokens_generated": tokens}
-                _log(
-                    mode=mode, image=img_ref,
-                    ringkasan=ringkasan, klaim=klaim, fakta=fakta,
-                    prompt=prompt, max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                )
+                _weave.finish_call(weave_call, output={
+                    "text": result_text,
+                    "tokens_generated": tokens,
+                    "elapsed_ms": elapsed_ms,
+                })
         except Exception as e:
-            print(f"[WEAVE] log failed: {e}")
+            print(f"[WEAVE] finish_call failed: {e}")
 
         return {"text": result_text, "tokens_generated": tokens}
 
