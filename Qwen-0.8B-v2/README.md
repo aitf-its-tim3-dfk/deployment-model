@@ -1,0 +1,187 @@
+# qwen35-ws3-v2
+
+A [Modal](https://modal.com) deployment of [`aitf-komdigi/KomdigiITS-0.8B-DFK-MultimodalClassification`](https://huggingface.co/aitf-komdigi/KomdigiITS-0.8B-DFK-MultimodalClassification/tree/main/adapter) — a fine-tuned Qwen VLM (vision-language model) served as a GPU-backed FastAPI endpoint.
+
+The model performs social media content violation classification (DFK), returning a structured `Label:` and `Analisis:` given a post's screenshot and metadata.
+
+## Adapter
+
+This copy is configured for the new adapter repository:
+
+```text
+aitf-komdigi/KomdigiITS-0.8B-DFK-MultimodalClassification
+subfolder: adapter
+```
+
+`modal_app_transformers.py` loads `adapter/adapter_config.json` with `hf_hub_download(..., subfolder="adapter")`, reads `base_model_name_or_path` (`unsloth/Qwen3.5-0.8B`), loads the base model, then applies the LoRA adapter with `PeftModel.from_pretrained(..., subfolder="adapter")`.
+
+The adapter folder is public. `HF_TOKEN` is only needed if this repository is made private or gated later.
+
+## Features
+
+- **DFK classification** — detects violations (hate speech, disinformation, etc.) from social media screenshots + metadata
+- **Captioning mode** — describes images in detail in Bahasa Indonesia (uses base model, LoRA adapter disabled)
+- **Free-form prompt** — bypass the DFK template entirely with a custom prompt
+- **CPU memory snapshot** — model loaded to CPU once, snapshotted, restored on cold start (~20s vs ~70s without)
+- **Concurrent inputs** — one container handles up to 2 parallel requests before scaling
+
+## Setup
+
+```bash
+pip install modal
+modal setup
+```
+
+The adapter is public, so Hugging Face auth is not required for normal deployment.
+
+`modal_app_transformers.py` still includes the original `wandb-secret` wiring for Weave/W&B logging. The Weave team/entity remains `Aitf-dfk-3`, while the project is `log-qwen-v2`. If you do not use Weave logging, you can remove the `secrets=[modal.Secret.from_name("wandb-secret")]` arguments from the class and endpoint decorators.
+
+## Commands
+
+```bash
+# One-shot inference (runs on remote GPU)
+modal run Qwen-0.8B-v2/modal_app_transformers.py --ringkasan "..." --klaim "..." --fakta "..."
+modal run Qwen-0.8B-v2/modal_app_transformers.py --prompt "Describe this image" --image-url "https://..."
+
+# Dev server (hot-reload, temporary endpoint URL printed to console)
+modal serve Qwen-0.8B-v2/modal_app_transformers.py
+
+# Production deploy
+modal deploy Qwen-0.8B-v2/modal_app_transformers.py
+
+# Stream logs
+modal app logs qwen35-ws3-v2
+```
+
+## API
+
+**Endpoint:** `POST https://<your-modal-username>--qwen35-ws3-v2-infer.modal.run`
+
+### DFK Classification
+
+```json
+{
+  "ringkasan": "Summary of the social media post",
+  "klaim": "Claim made in the post",
+  "fakta": "Verified fact for comparison",
+  "image_url": "https://...",
+  "max_new_tokens": 128,
+  "temperature": 0.7,
+  "top_p": 0.8,
+  "top_k": 20,
+  "min_p": 0.0,
+  "repetition_penalty": 1.0
+}
+```
+
+**Response:**
+```json
+{
+  "text": "Label: DISINFORMASI\n\nAnalisis: ...",
+  "tokens_generated": 74
+}
+```
+
+### Image Captioning
+
+```json
+{
+  "captioning": true,
+  "image_url": "https://...",
+  "max_new_tokens": 256
+}
+```
+
+Optionally override the default captioning instruction:
+
+```json
+{
+  "captioning": true,
+  "image_url": "https://...",
+  "caption_prompt": "What text is visible in this image?"
+}
+```
+
+### Free-form Prompt
+
+```json
+{
+  "prompt": "Your custom prompt here",
+  "image_url": "https://...",
+  "max_new_tokens": 256
+}
+```
+
+### Field Aliases
+
+| Field | Alias |
+|-------|-------|
+| `ringkasan` | `summary` |
+| `klaim` | `claim` |
+| `fakta` | `fact` |
+
+### Input Options
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `image_url` | string | Public image URL |
+| `image_base64` | string | Base64-encoded image (data URI prefix stripped automatically) |
+
+## Architecture
+
+**File:** `Qwen-0.8B-v2/modal_app_transformers.py`
+
+| Component | Description |
+|-----------|-------------|
+| `QwenServer` | Modal class on L4 GPU. Loads model once via `@modal.enter(snap=True)` to CPU, snapshots memory, then moves to GPU via `@modal.enter(snap=False)`. |
+| `infer` | FastAPI `POST` endpoint. Thin wrapper delegating to `QwenServer().generate.remote(...)`. |
+| `main` | Local entrypoint for `modal run`. |
+| HF Volume cache | `modal.Volume` named `qwen35-ws3-v2-cache` persists downloaded base model and adapter weights across cold starts. |
+
+**Model loading flow:**
+1. `snap=True` — downloads weights (cached in Volume), loads processor + model to CPU concurrently via `ThreadPoolExecutor`, wraps with `PeftModel` if LoRA adapter detected → **snapshot taken**
+2. `snap=False` — moves model from CPU → GPU (`bfloat16`) → ready to serve
+3. Captioning requests use `self.model.disable_adapter()` to run the base model without LoRA
+
+## Generation Parameters
+
+All generation parameters are optional and apply to both DFK and captioning modes.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `max_new_tokens` | 128 | Maximum tokens to generate |
+| `temperature` | 0.0 | Sampling temperature. `0` = greedy/deterministic. Higher = more random |
+| `top_p` | 0.8 | Nucleus sampling — only sample from top tokens whose cumulative probability ≥ `top_p`. Active when `temperature > 0` |
+| `top_k` | 20 | Only sample from top-k most probable tokens. Active when `temperature > 0` |
+| `min_p` | 0.0 | Minimum probability threshold relative to top token. Active when `temperature > 0` and `min_p > 0` |
+| `repetition_penalty` | 1.0 | `1.0` = no penalty. `> 1.0` penalizes repeated tokens |
+
+**Example with custom generation params:**
+
+```json
+{
+  "ringkasan": "...",
+  "klaim": "...",
+  "fakta": "...",
+  "image_url": "https://...",
+  "max_new_tokens": 256,
+  "temperature": 0.7,
+  "top_p": 0.9,
+  "top_k": 50,
+  "repetition_penalty": 1.1
+}
+```
+
+> Note: `top_p`, `top_k`, and `min_p` are ignored when `temperature` is `0` (greedy decoding).
+
+## Infrastructure
+
+| Setting | Value |
+|---------|-------|
+| GPU | NVIDIA L4 |
+| CPU | 4 vCPU |
+| Memory | 24 GB |
+| Timeout | 600s |
+| Scale-down | 60s idle |
+| Concurrency | 2 inputs per container |
+| Snapshot | CPU memory snapshot enabled |
