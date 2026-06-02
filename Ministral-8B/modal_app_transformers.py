@@ -79,6 +79,26 @@ def _load_image_url(image_url: str):
     return Image.open(io.BytesIO(response.content)).convert("RGB")
 
 
+# Fallback chat template for Mistral VLM tokenizers that don't ship one
+MISTRAL_VLM_CHAT_TEMPLATE = (
+    "{{ bos_token }}"
+    "{% for message in messages %}"
+    "{% if message['role'] == 'user' %}"
+    "[INST] "
+    "{% if message['content'] is string %}{{ message['content'] }}"
+    "{% else %}"
+    "{% for item in message['content'] %}"
+    "{% if item['type'] == 'text' %}{{ item['text'] }}"
+    "{% elif item['type'] == 'image' %}[IMG]"
+    "{% endif %}"
+    "{% endfor %}"
+    "{% endif %}"
+    " [/INST]"
+    "{% elif message['role'] == 'assistant' %}{{ message['content'] }}{{ eos_token }}"
+    "{% endif %}"
+    "{% endfor %}"
+)
+
 DFK_INSTRUCTION = (
     "Anda adalah seorang analis konten media sosial ahli. "
     "Diberikan tangkapan layar dari sebuah unggahan media sosial dan metadata berupa "
@@ -166,7 +186,7 @@ class MinistralServer:
                 base_model_id,
                 token=token,
                 trust_remote_code=True,
-                torch_dtype="auto",
+                dtype="bfloat16",
                 device_map="cpu",
                 cache_dir=CACHE_DIR,
             )
@@ -176,6 +196,9 @@ class MinistralServer:
             f_model = executor.submit(load_model)
             self.processor = f_processor.result()
             self.model = f_model.result()
+
+        if not getattr(self.processor.tokenizer, "chat_template", None):
+            self.processor.tokenizer.chat_template = MISTRAL_VLM_CHAT_TEMPLATE
 
         if adapter_model_id:
             self.model = PeftModel.from_pretrained(
@@ -259,7 +282,7 @@ class MinistralServer:
 
         messages = [{"role": "user", "content": content}]
 
-        text = self.processor.apply_chat_template(
+        text = self.processor.tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=True,
             tokenize=False,
