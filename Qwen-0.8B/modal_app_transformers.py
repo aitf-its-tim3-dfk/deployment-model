@@ -213,53 +213,60 @@ class QwenServer:
             self._weave = None
             self._weave_client = None
 
-    def _score_logits_labels(self, inputs) -> dict[str, Any]:
+    def _score_logits_labels(self, text: str, images) -> dict[str, Any]:
         import torch
 
-        device = inputs["input_ids"].device
-        prefix_ids = self.processor.tokenizer.encode("Label: ", add_special_tokens=False)
-        prefix_tensor = torch.tensor([prefix_ids], device=device)
-        prefix_attn = torch.ones_like(prefix_tensor)
-        base_ids = torch.cat([inputs["input_ids"], prefix_tensor], dim=1)
-        base_attn = torch.cat([inputs["attention_mask"], prefix_attn], dim=1)
+        device = next(self.model.parameters()).device
+        base_inputs = self.processor(
+            text=[text + "Label:"],
+            images=images,
+            return_tensors="pt",
+        ).to(device)
+        base_ids = base_inputs["input_ids"][0]
 
-        config = self.model.config
-        vocab_size = (
-            config.vocab_size
-            if hasattr(config, "vocab_size")
-            else config.text_config.vocab_size
-        )
+        candidates = []
+        allowed_tokens = set()
+        for label in LABELS:
+            candidate_inputs = self.processor(
+                text=[text + f"Label: {label}"],
+                images=images,
+                return_tensors="pt",
+            ).to(device)
+            candidate_ids = candidate_inputs["input_ids"][0]
+            prefix_len = base_ids.shape[0]
+            if not torch.equal(candidate_ids[:prefix_len], base_ids):
+                prefix_len = 0
+                max_prefix_len = min(base_ids.shape[0], candidate_ids.shape[0])
+                while (
+                    prefix_len < max_prefix_len
+                    and base_ids[prefix_len].item() == candidate_ids[prefix_len].item()
+                ):
+                    prefix_len += 1
+            suffix_ids = candidate_ids[prefix_len:]
+            candidates.append((label, candidate_inputs, suffix_ids, prefix_len))
+            allowed_tokens.update(suffix_ids.tolist())
+
+        vocab_size = self.model.get_input_embeddings().weight.shape[0]
         label_mask = torch.full((vocab_size,), float("-inf"), device=device)
-        label_mask[self._label_all_tokens] = 0.0
+        label_mask[list(allowed_tokens)] = 0.0
 
-        def score_label(label_token_ids: list[int]) -> float:
-            label_tensor = torch.tensor([label_token_ids], device=device)
-            combined_ids = torch.cat([base_ids, label_tensor], dim=1)
-            combined_attn = torch.cat(
-                [base_attn, torch.ones_like(label_tensor)],
-                dim=1,
-            )
-            model_inputs = dict(inputs)
-            model_inputs["input_ids"] = combined_ids
-            model_inputs["attention_mask"] = combined_attn
-
+        def score_candidate(candidate_inputs, suffix_ids, prefix_len: int) -> float:
             with torch.inference_mode():
-                out = self.model(**model_inputs)
+                out = self.model(**candidate_inputs)
 
             logits = out.logits[0]
-            prompt_len = base_ids.shape[1]
             log_probs_sum = 0.0
-            for step, token_id in enumerate(label_token_ids):
-                step_logits = logits[prompt_len - 1 + step]
+            for step, token_id in enumerate(suffix_ids.tolist()):
+                step_logits = logits[prefix_len - 1 + step]
                 filtered = step_logits + label_mask
                 step_log_probs = torch.nn.functional.log_softmax(filtered, dim=-1)
                 log_probs_sum += step_log_probs[token_id].item()
 
-            return log_probs_sum / len(label_token_ids)
+            return log_probs_sum / max(len(suffix_ids), 1)
 
         raw_scores = {
-            label: score_label(token_ids)
-            for label, token_ids in zip(LABELS, self._label_token_seqs)
+            label: score_candidate(candidate_inputs, suffix_ids, prefix_len)
+            for label, candidate_inputs, suffix_ids, prefix_len in candidates
         }
         max_score = max(raw_scores.values())
         exp_scores = {
@@ -343,7 +350,7 @@ class QwenServer:
         ).to(next(self.model.parameters()).device)
         logits_result = None
         if mode == "dfk":
-            logits_result = self._score_logits_labels(inputs)
+            logits_result = self._score_logits_labels(text, images)
 
         generation_kwargs: dict[str, Any] = dict(
             max_new_tokens=max_new_tokens,
