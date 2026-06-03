@@ -10,6 +10,12 @@ MODEL_ID = "aitf-komdigi/KomdigiITS-0.8B-DFK-MultimodalClassification"
 CACHE_DIR = "/cache/huggingface"
 ADAPTER_SUBFOLDER = "adapter"
 LABELS = ["NETRAL", "DISINFORMASI", "UJARAN KEBENCIAN", "FITNAH"]
+LABEL_CANDIDATES = {
+    "NETRAL": "netral",
+    "DISINFORMASI": "disinformasi",
+    "UJARAN KEBENCIAN": "ujaran kebencian",
+    "FITNAH": "fitnah",
+}
 
 
 app = modal.App(APP_NAME)
@@ -234,8 +240,9 @@ class QwenServer:
         candidates = []
         allowed_tokens = set()
         for label in LABELS:
+            label_text = LABEL_CANDIDATES[label]
             candidate_inputs = self.processor(
-                text=[text + f"Label: {label}"],
+                text=[text + f"Label: {label_text}"],
                 images=images,
                 return_tensors="pt",
             ).to(device)
