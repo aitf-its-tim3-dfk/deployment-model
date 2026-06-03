@@ -9,6 +9,7 @@ APP_NAME = "qwen35-ws3-v2"
 MODEL_ID = "aitf-komdigi/KomdigiITS-0.8B-DFK-MultimodalClassification"
 CACHE_DIR = "/cache/huggingface"
 ADAPTER_SUBFOLDER = "adapter"
+LABELS = ["NETRAL", "DISINFORMASI", "UJARAN KEBENCIAN", "FITNAH"]
 
 
 app = modal.App(APP_NAME)
@@ -188,6 +189,15 @@ class QwenServer:
 
         self.model.eval()
 
+        self._label_token_seqs = [
+            self.processor.tokenizer.encode(label, add_special_tokens=False)
+            for label in LABELS
+        ]
+        self._label_all_tokens = list(
+            {token_id for token_ids in self._label_token_seqs for token_id in token_ids}
+        )
+        print(f"[INIT] logits labels: {dict(zip(LABELS, self._label_token_seqs))}")
+
     @modal.enter(snap=False)
     def move_to_gpu(self):
         import torch
@@ -209,6 +219,67 @@ class QwenServer:
                 print(f"[WEAVE] init failed: {e}")
         else:
             print("[WEAVE] disabled: WANDB_API_KEY is not set")
+
+    def _score_logits_labels(self, inputs) -> dict[str, Any]:
+        import torch
+
+        device = inputs["input_ids"].device
+        prefix_ids = self.processor.tokenizer.encode("Label: ", add_special_tokens=False)
+        prefix_tensor = torch.tensor([prefix_ids], device=device)
+        prefix_attn = torch.ones_like(prefix_tensor)
+        base_ids = torch.cat([inputs["input_ids"], prefix_tensor], dim=1)
+        base_attn = torch.cat([inputs["attention_mask"], prefix_attn], dim=1)
+
+        config = self.model.config
+        vocab_size = (
+            config.vocab_size
+            if hasattr(config, "vocab_size")
+            else config.text_config.vocab_size
+        )
+        label_mask = torch.full((vocab_size,), float("-inf"), device=device)
+        label_mask[self._label_all_tokens] = 0.0
+
+        def score_label(label_token_ids: list[int]) -> float:
+            label_tensor = torch.tensor([label_token_ids], device=device)
+            combined_ids = torch.cat([base_ids, label_tensor], dim=1)
+            combined_attn = torch.cat(
+                [base_attn, torch.ones_like(label_tensor)],
+                dim=1,
+            )
+            model_inputs = dict(inputs)
+            model_inputs["input_ids"] = combined_ids
+            model_inputs["attention_mask"] = combined_attn
+
+            with torch.inference_mode():
+                out = self.model(**model_inputs)
+
+            logits = out.logits[0]
+            prompt_len = base_ids.shape[1]
+            log_probs_sum = 0.0
+            for step, token_id in enumerate(label_token_ids):
+                step_logits = logits[prompt_len - 1 + step]
+                filtered = step_logits + label_mask
+                step_log_probs = torch.nn.functional.log_softmax(filtered, dim=-1)
+                log_probs_sum += step_log_probs[token_id].item()
+
+            return log_probs_sum / len(label_token_ids)
+
+        raw_scores = {
+            label: score_label(token_ids)
+            for label, token_ids in zip(LABELS, self._label_token_seqs)
+        }
+        max_score = max(raw_scores.values())
+        exp_scores = {
+            label: torch.exp(torch.tensor(score - max_score)).item()
+            for label, score in raw_scores.items()
+        }
+        total = sum(exp_scores.values())
+        scores = {
+            label: round((score / total) * 100, 2)
+            for label, score in exp_scores.items()
+        }
+        predicted = max(scores, key=scores.get)
+        return {"logits_label": predicted, "logits_scores": scores}
 
     @modal.method()
     def generate(
@@ -277,6 +348,9 @@ class QwenServer:
             images=images,
             return_tensors="pt",
         ).to(next(self.model.parameters()).device)
+        logits_result = None
+        if mode == "dfk":
+            logits_result = self._score_logits_labels(inputs)
 
         generation_kwargs: dict[str, Any] = dict(
             max_new_tokens=max_new_tokens,
@@ -304,7 +378,8 @@ class QwenServer:
                     inputs={
                         "mode": mode, "image": img_ref,
                         "ringkasan": ringkasan, "klaim": klaim, "fakta": fakta,
-                        "prompt": prompt, "max_new_tokens": max_new_tokens,
+                        "prompt": prompt, "model_prompt": text,
+                        "max_new_tokens": max_new_tokens,
                         "temperature": temperature,
                     },
                 )
@@ -331,10 +406,17 @@ class QwenServer:
         tokens = new_token_ids.shape[-1]
         total_ms = int((_time.time() - t_total) * 1000)
         print(f"[OUTPUT] tokens={tokens} elapsed_ms={elapsed_ms} total_ms={total_ms} text={result_text!r}")
+        if logits_result:
+            print(
+                f"[LOGITS] label={logits_result['logits_label']} "
+                f"scores={logits_result['logits_scores']}"
+            )
 
         try:
             if self._weave_client and weave_call:
                 out = {"text": result_text, "tokens_generated": tokens, "elapsed_ms": elapsed_ms, "total_request_ms": total_ms}
+                if logits_result:
+                    out.update(logits_result)
                 if self._gpu_warmup_ms is not None:
                     out["gpu_warmup_ms"] = self._gpu_warmup_ms
                     self._gpu_warmup_ms = None
@@ -342,7 +424,10 @@ class QwenServer:
         except Exception as e:
             print(f"[WEAVE] finish_call failed: {e}")
 
-        return {"text": result_text, "tokens_generated": tokens}
+        result = {"text": result_text, "tokens_generated": tokens}
+        if logits_result:
+            result.update(logits_result)
+        return result
 
 
 @app.function(image=image, timeout=600, secrets=[modal.Secret.from_name("wandb-secret")])

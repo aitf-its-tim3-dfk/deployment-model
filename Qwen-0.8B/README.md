@@ -7,8 +7,10 @@ The model performs social media content violation classification (DFK), returnin
 ## Features
 
 - **DFK classification** — detects violations (hate speech, disinformation, etc.) from social media screenshots + metadata
+- **Logits label probe** — returns MTLA-style percentage scores for fixed labels alongside the generated `Label:`/`Analisis:` response
 - **Captioning mode** — describes images in detail in Bahasa Indonesia (uses base model, LoRA adapter disabled)
 - **Free-form prompt** — bypass the DFK template entirely with a custom prompt
+- **Weave tracing** — records request metadata, latency, generated output, logits scores, and the final `model_prompt`
 - **CPU memory snapshot** — model loaded to CPU once, snapshotted, restored on cold start (~20s vs ~70s without)
 - **Concurrent inputs** — one container handles up to 2 parallel requests before scaling
 
@@ -69,9 +71,19 @@ modal app logs qwen35-ws3
 ```json
 {
   "text": "Label: DISINFORMASI\n\nAnalisis: ...",
-  "tokens_generated": 74
+  "tokens_generated": 74,
+  "logits_label": "DISINFORMASI",
+  "logits_scores": {
+    "NETRAL": 3.75,
+    "DISINFORMASI": 77.68,
+    "UJARAN KEBENCIAN": 11.35,
+    "FITNAH": 7.22
+  },
+  "infer_total_ms": 33838
 }
 ```
+
+`logits_scores` is an experimental label probe for the fixed labels `NETRAL`, `DISINFORMASI`, `UJARAN KEBENCIAN`, and `FITNAH`. Scores are relative percentages, not calibrated probabilities. The probe is only added for normal DFK requests; captioning and free-form prompt requests keep the original response shape.
 
 ### Image Captioning
 
@@ -128,11 +140,19 @@ Optionally override the default captioning instruction:
 | `infer` | FastAPI `POST` endpoint. Thin wrapper delegating to `QwenServer().generate.remote(...)`. |
 | `main` | Local entrypoint for `modal run`. |
 | HF Volume cache | `modal.Volume` named `qwen35-ws3-cache` persists downloaded weights across cold starts. |
+| Logits probe | Scores fixed labels after the forced `Label: ` prefix using averaged label-token log probabilities, then softmaxes across labels. |
+| Weave trace | Stores request fields, rendered `model_prompt`, generated output, latency, GPU warmup, and logits scores when available. |
 
 **Model loading flow:**
 1. `snap=True` — downloads weights (cached in Volume), loads processor + model to CPU concurrently via `ThreadPoolExecutor`, wraps with `PeftModel` if LoRA adapter detected → **snapshot taken**
 2. `snap=False` — moves model from CPU → GPU (`bfloat16`) → ready to serve
 3. Captioning requests use `self.model.disable_adapter()` to run the base model without LoRA
+
+**Logits scoring flow:**
+1. Render the same DFK chat template used for generation.
+2. Append the prefix `Label: ` so scores are measured at the label position.
+3. Score each fixed label token-by-token, averaging log probabilities for multi-token labels.
+4. Softmax the averaged scores into percentage-like values and return the highest label as `logits_label`.
 
 ## Generation Parameters
 
