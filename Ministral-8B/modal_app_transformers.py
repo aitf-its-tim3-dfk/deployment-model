@@ -216,13 +216,18 @@ class MinistralServer:
         import torch
         import os
 
+        import time as _time
+        t0 = _time.time()
         self.model = self.model.to("cuda", dtype=torch.bfloat16)
+        self._gpu_warmup_ms = int((_time.time() - t0) * 1000)
+        print(f"[COLD_START] move_to_gpu elapsed_ms={self._gpu_warmup_ms}")
 
         self._weave = None
+        self._weave_client = None
         if os.environ.get("WANDB_API_KEY"):
             try:
                 import weave
-                weave.init("Aitf-dfk-3/ministral")
+                self._weave_client = weave.init("Aitf-dfk-3/ministral")
                 self._weave = weave
             except Exception as e:
                 print(f"[WEAVE] init failed: {e}")
@@ -249,6 +254,9 @@ class MinistralServer:
     ) -> dict[str, Any]:
         if image_url and image_base64:
             raise ValueError("Provide either image_url or image_base64, not both.")
+
+        import time as _time
+        t_total = _time.time()
 
         mode = "captioning" if captioning else ("prompt" if prompt else "dfk")
         img_ref = image_url or ("[base64]" if image_base64 else None)
@@ -311,12 +319,11 @@ class MinistralServer:
 
         weave_call = None
         try:
-            if self._weave:
-                import weave as _weave
+            if self._weave_client:
                 from datetime import datetime, timezone, timedelta
                 wib = timezone(timedelta(hours=7))
                 ts = datetime.now(wib).strftime("%Y-%m-%d %H:%M WIB")
-                weave_call = _weave.create_call(
+                weave_call = self._weave_client.create_call(
                     f"ministral-8b-ws3-generate | {ts}",
                     inputs={
                         "mode": mode, "image": img_ref,
@@ -346,16 +353,16 @@ class MinistralServer:
 
         result_text = output.strip()
         tokens = new_token_ids.shape[-1]
-        print(f"[OUTPUT] tokens={tokens} elapsed_ms={elapsed_ms} text={result_text!r}")
+        total_ms = int((_time.time() - t_total) * 1000)
+        print(f"[OUTPUT] tokens={tokens} elapsed_ms={elapsed_ms} total_ms={total_ms} text={result_text!r}")
 
         try:
-            if self._weave and weave_call:
-                import weave as _weave
-                _weave.finish_call(weave_call, output={
-                    "text": result_text,
-                    "tokens_generated": tokens,
-                    "elapsed_ms": elapsed_ms,
-                })
+            if self._weave_client and weave_call:
+                out = {"text": result_text, "tokens_generated": tokens, "elapsed_ms": elapsed_ms, "total_request_ms": total_ms}
+                if self._gpu_warmup_ms is not None:
+                    out["gpu_warmup_ms"] = self._gpu_warmup_ms
+                    self._gpu_warmup_ms = None
+                self._weave_client.finish_call(weave_call, output=out)
         except Exception as e:
             print(f"[WEAVE] finish_call failed: {e}")
 
@@ -365,7 +372,9 @@ class MinistralServer:
 @app.function(image=image, timeout=600, secrets=[modal.Secret.from_name("wandb-secret")])
 @modal.fastapi_endpoint(method="POST", docs=True)
 def infer(payload: dict[str, Any]) -> dict[str, Any]:
-    return MinistralServer().generate.remote(
+    import time
+    t0 = time.time()
+    result = MinistralServer().generate.remote(
         prompt=payload.get("prompt"),
         image_url=payload.get("image_url"),
         image_base64=payload.get("image_base64"),
@@ -381,6 +390,8 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
         min_p=float(payload.get("min_p", 0.0)),
         repetition_penalty=float(payload.get("repetition_penalty", 1.0)),
     )
+    result["infer_total_ms"] = int((time.time() - t0) * 1000)
+    return result
 
 
 @app.local_entrypoint()
