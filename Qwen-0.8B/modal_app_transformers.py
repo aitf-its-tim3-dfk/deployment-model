@@ -100,6 +100,7 @@ def build_dfk_content(
     ringkasan: str = "",
     klaim: str = "",
     fakta: str = "",
+    instruction: str | None = None,
 ) -> list[dict[str, str]]:
     context_parts = []
     if ringkasan.strip():
@@ -109,7 +110,7 @@ def build_dfk_content(
     if fakta.strip():
         context_parts.append(f"Fakta: {fakta.strip()}")
 
-    content = [{"type": "text", "text": DFK_INSTRUCTION}]
+    content = [{"type": "text", "text": instruction or DFK_INSTRUCTION}]
     if context_parts:
         content.append({"type": "text", "text": "\n".join(context_parts)})
     return content
@@ -290,6 +291,7 @@ class QwenServer:
         ringkasan: str = "",
         klaim: str = "",
         fakta: str = "",
+        dfk_prompt: str | None = None,
         captioning: bool = False,
         caption_prompt: str | None = None,
         max_new_tokens: int = 128,
@@ -331,6 +333,7 @@ class QwenServer:
                 ringkasan=ringkasan,
                 klaim=klaim,
                 fakta=fakta,
+                instruction=dfk_prompt,
             )
             if pil_image is not None:
                 content.append({"type": "image"})
@@ -379,7 +382,9 @@ class QwenServer:
                     inputs={
                         "mode": mode, "image": img_ref,
                         "ringkasan": ringkasan, "klaim": klaim, "fakta": fakta,
-                        "prompt": prompt, "model_prompt": text,
+                        "prompt": prompt, "dfk_prompt": dfk_prompt,
+                        "caption_prompt": caption_prompt,
+                        "model_prompt": text,
                         "max_new_tokens": max_new_tokens,
                         "temperature": temperature,
                     },
@@ -437,6 +442,20 @@ class QwenServer:
 def infer(payload: dict[str, Any]) -> dict[str, Any]:
     import time
     t0 = time.time()
+    captioning = bool(payload.get("captioning", False))
+    system_prompt = payload.get("system_prompt") or None
+    dfk_prompt = (
+        payload.get("dfk_prompt")
+        or payload.get("dfk_system_prompt")
+        or payload.get("dfk_instruction")
+        or (system_prompt if not captioning and not payload.get("prompt") else None)
+    )
+    caption_prompt = (
+        payload.get("caption_prompt")
+        or payload.get("caption_system_prompt")
+        or payload.get("caption_instruction")
+        or (system_prompt if captioning else None)
+    )
     result = QwenServer().generate.remote(
         prompt=payload.get("prompt"),
         image_url=payload.get("image_url"),
@@ -444,8 +463,9 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
         ringkasan=str(payload.get("ringkasan") or payload.get("summary") or ""),
         klaim=str(payload.get("klaim") or payload.get("claim") or ""),
         fakta=str(payload.get("fakta") or payload.get("fact") or ""),
-        captioning=bool(payload.get("captioning", False)),
-        caption_prompt=payload.get("caption_prompt") or None,
+        dfk_prompt=dfk_prompt,
+        captioning=captioning,
+        caption_prompt=caption_prompt,
         max_new_tokens=int(payload.get("max_new_tokens", 128)),
         temperature=float(payload.get("temperature", 0.0)),
         top_p=float(payload.get("top_p", 0.8)),
@@ -464,6 +484,7 @@ def main(
     ringkasan: str = "",
     klaim: str = "",
     fakta: str = "",
+    dfk_prompt: str | None = None,
     captioning: bool = False,
     caption_prompt: str | None = None,
     max_new_tokens: int = 256,
@@ -474,6 +495,7 @@ def main(
         ringkasan=ringkasan,
         klaim=klaim,
         fakta=fakta,
+        dfk_prompt=dfk_prompt,
         captioning=captioning,
         caption_prompt=caption_prompt,
         max_new_tokens=max_new_tokens,
