@@ -402,6 +402,7 @@ class QwenServer:
                         "prompt": prompt, "dfk_prompt": dfk_prompt,
                         "caption_prompt": caption_prompt,
                         "model_prompt": text,
+                        "messages_input": messages if mode == "messages" else None,
                         "max_new_tokens": max_new_tokens,
                         "temperature": temperature,
                     },
