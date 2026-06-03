@@ -6,3 +6,4 @@ __pycache__/
 CLAUDE.md
 .claude
 Qwen-0.8B/modal_app_classify.py
+Ministral-8B/modal_app_vllm.py

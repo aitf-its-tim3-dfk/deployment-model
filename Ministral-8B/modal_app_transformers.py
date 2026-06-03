@@ -324,6 +324,7 @@ class MinistralServer:
     def generate(
         self,
         prompt: str | None = None,
+        messages: list[dict] | None = None,
         image_url: str | None = None,
         image_base64: str | None = None,
         ringkasan: str = "",
@@ -345,7 +346,7 @@ class MinistralServer:
         import time as _time
         t_total = _time.time()
 
-        mode = "captioning" if captioning else ("prompt" if prompt else "dfk")
+        mode = "captioning" if captioning else ("messages" if messages else ("prompt" if prompt else "dfk"))
         img_ref = image_url or ("[base64]" if image_base64 else None)
         print(f"[INPUT] mode={mode} image={img_ref} ringkasan={ringkasan!r} klaim={klaim!r} fakta={fakta!r} prompt={prompt!r} max_new_tokens={max_new_tokens} temperature={temperature}")
 
@@ -355,7 +356,9 @@ class MinistralServer:
         elif image_base64:
             pil_image = _decode_image(image_base64)
 
-        if captioning:
+        if messages:
+            pass  # use messages directly below
+        elif captioning:
             if pil_image is None:
                 return {"text": "Error: image_url or image_base64 is required for captioning."}
             content: list[dict[str, Any]] = [
@@ -376,7 +379,8 @@ class MinistralServer:
             if pil_image is not None:
                 content.append({"type": "image"})
 
-        messages = [{"role": "user", "content": content}]
+        if not messages:
+            messages = [{"role": "user", "content": content}]
 
         text = self.processor.tokenizer.apply_chat_template(
             messages,
@@ -494,6 +498,7 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
     )
     result = MinistralServer().generate.remote(
         prompt=payload.get("prompt"),
+        messages=payload.get("messages") or None,
         image_url=payload.get("image_url"),
         image_base64=payload.get("image_base64"),
         ringkasan=str(payload.get("ringkasan") or payload.get("summary") or ""),

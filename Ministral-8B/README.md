@@ -19,8 +19,9 @@ subfolder: adapter
 
 - **DFK classification** — detects violations from social media screenshots plus `ringkasan`, `klaim`, and `fakta`.
 - **Logits label probe** — returns MTLA-style percentage scores for `NETRAL`, `DISINFORMASI`, `UJARAN KEBENCIAN`, and `FITNAH`.
-- **Captioning mode** — describes images in Bahasa Indonesia with the LoRA adapter disabled.
-- **Free-form prompt** — bypasses the DFK template with a custom prompt.
+- **Captioning mode** — describes images with the LoRA adapter disabled. Optionally override with `caption_prompt`.
+- **Free-form prompt** — bypasses the DFK template with a custom prompt, optionally with an image.
+- **Free-form messages** — accepts OpenAI-style `messages` array directly, optionally with an image via `image_url`.
 - **Weave tracing** — records request metadata, latency, generated output, logits scores, and the rendered `model_prompt`.
 - **Mistral chat template fallback** — injects a local template if the tokenizer does not provide one.
 - **CPU memory snapshot** — loads on CPU first, snapshots memory, then moves to GPU on container start.
@@ -93,15 +94,18 @@ modal app logs ministral-8b-ws3
 
 `logits_scores` is an experimental label probe. Scores are relative percentages, not calibrated probabilities. The probe is only added for normal DFK requests; captioning and free-form prompt requests keep the original response shape.
 
-### Other Modes
+### Captioning
 
 ```json
 {
   "captioning": true,
   "image_url": "https://...",
+  "caption_prompt": "Describe everything you see in detail.",
   "max_new_tokens": 256
 }
 ```
+
+### Free-form Prompt
 
 ```json
 {
@@ -111,7 +115,56 @@ modal app logs ministral-8b-ws3
 }
 ```
 
-Field aliases are supported: `summary` -> `ringkasan`, `claim` -> `klaim`, and `fact` -> `fakta`. Images can be provided as `image_url` or `image_base64`.
+### Free-form Messages (OpenAI format)
+
+```json
+{
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "Analyze this content..."}
+  ],
+  "max_new_tokens": 256
+}
+```
+
+With image:
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": [
+      {"type": "image"},
+      {"type": "text", "text": "What is in this image?"}
+    ]}
+  ],
+  "image_url": "https://...",
+  "max_new_tokens": 256
+}
+```
+
+### Mode Priority
+
+| Priority | Trigger | Mode |
+|----------|---------|------|
+| 1 | `captioning: true` | Captioning (base model) |
+| 2 | `messages` array | Free messages (LoRA) |
+| 3 | `prompt` string | Free prompt (LoRA) |
+| 4 | default | DFK classification (LoRA) |
+
+Field aliases: `summary` → `ringkasan`, `claim` → `klaim`, `fact` → `fakta`. Images via `image_url` or `image_base64`.
+
+### Optional Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `max_new_tokens` | 128 | Max tokens to generate |
+| `temperature` | 0.0 | Sampling temperature |
+| `top_p` | 0.8 | Nucleus sampling |
+| `top_k` | 20 | Top-k sampling |
+| `repetition_penalty` | 1.0 | Repetition penalty |
+| `dfk_prompt` | — | Override DFK system instruction |
+| `caption_prompt` | — | Override captioning instruction |
+| `system_prompt` | — | Shortcut system message for any mode |
 
 ## Architecture
 

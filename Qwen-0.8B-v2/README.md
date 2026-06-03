@@ -22,7 +22,8 @@ The adapter folder is public. `HF_TOKEN` is only needed if this repository is ma
 - **DFK classification** — detects violations (hate speech, disinformation, etc.) from social media screenshots + metadata
 - **Logits label probe** — returns MTLA-style percentage scores for fixed labels alongside the generated `Label:`/`Analisis:` response
 - **Captioning mode** — describes images in detail in Bahasa Indonesia (uses base model, LoRA adapter disabled)
-- **Free-form prompt** — bypass the DFK template entirely with a custom prompt
+- **Free-form prompt** — bypass the DFK template entirely with a custom prompt, optionally with an image
+- **Free-form messages** — accepts OpenAI-style `messages` array directly, optionally with an image
 - **Weave tracing** — records request metadata, latency, generated output, logits scores, and the final `model_prompt`
 - **CPU memory snapshot** — model loaded to CPU once, snapshotted, restored on cold start (~20s vs ~70s without)
 - **Concurrent inputs** — one container handles up to 2 parallel requests before scaling
@@ -123,6 +124,42 @@ Optionally override the default captioning instruction:
   "max_new_tokens": 256
 }
 ```
+
+### Free-form Messages (OpenAI format)
+
+```json
+{
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "Analyze this content..."}
+  ],
+  "max_new_tokens": 256
+}
+```
+
+With image:
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": [
+      {"type": "image"},
+      {"type": "text", "text": "What is in this image?"}
+    ]}
+  ],
+  "image_url": "https://...",
+  "max_new_tokens": 256
+}
+```
+
+### Mode Priority
+
+| Priority | Trigger | Mode |
+|----------|---------|------|
+| 1 | `captioning: true` | Captioning (base model) |
+| 2 | `messages` array | Free messages (LoRA) |
+| 3 | `prompt` string | Free prompt (LoRA) |
+| 4 | default | DFK classification (LoRA) |
 
 ### Field Aliases
 
