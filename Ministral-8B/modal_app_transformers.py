@@ -205,8 +205,27 @@ class MinistralServer:
             self.processor = f_processor.result()
             self.model = f_model.result()
 
-        if not getattr(self.processor.tokenizer, "chat_template", None):
+        # Prefer chat_template.jinja from adapter folder (matches training format exactly)
+        chat_template_loaded = False
+        if adapter_model_id:
+            try:
+                chat_template_path = hf_hub_download(
+                    repo_id=MODEL_ID,
+                    filename="chat_template.jinja",
+                    subfolder=ADAPTER_SUBFOLDER,
+                    token=token,
+                    cache_dir=CACHE_DIR,
+                )
+                with open(chat_template_path) as f:
+                    self.processor.tokenizer.chat_template = f.read()
+                chat_template_loaded = True
+                print("[INIT] chat_template loaded from adapter/chat_template.jinja")
+            except Exception as e:
+                print(f"[INIT] chat_template.jinja not found, will use fallback: {e}")
+
+        if not chat_template_loaded and not getattr(self.processor.tokenizer, "chat_template", None):
             self.processor.tokenizer.chat_template = MISTRAL_VLM_CHAT_TEMPLATE
+            print("[INIT] using hardcoded MISTRAL_VLM_CHAT_TEMPLATE fallback")
 
         if adapter_model_id:
             self.model = PeftModel.from_pretrained(
