@@ -24,7 +24,9 @@ The adapter folder is public. `HF_TOKEN` is only needed if this repository is ma
 - **Captioning mode** — describes images in detail in Bahasa Indonesia (uses base model, LoRA adapter disabled)
 - **Free-form prompt** — bypass the DFK template entirely with a custom prompt, optionally with an image
 - **Free-form messages** — accepts OpenAI-style `messages` array directly, optionally with an image
-- **Weave tracing** — records request metadata, latency, generated output, logits scores, and the final `model_prompt`
+- **Custom DFK instruction** — override the default system prompt via `dfk_prompt` or the `system_prompt` shortcut
+- **Weave tracing** — records request metadata, latency, generated output, logits scores, rendered `model_prompt`, and GPU warmup on cold start
+- **GPU warmup tracking** — logs `move_to_gpu` time and includes `gpu_warmup_ms` in the first Weave trace after cold start
 - **CPU memory snapshot** — model loaded to CPU once, snapshotted, restored on cold start (~20s vs ~70s without)
 - **Concurrent inputs** — one container handles up to 2 parallel requests before scaling
 
@@ -212,6 +214,9 @@ All generation parameters are optional and apply to both DFK and captioning mode
 | `top_k` | 20 | Only sample from top-k most probable tokens. Active when `temperature > 0` |
 | `min_p` | 0.0 | Minimum probability threshold relative to top token. Active when `temperature > 0` and `min_p > 0` |
 | `repetition_penalty` | 1.0 | `1.0` = no penalty. `> 1.0` penalizes repeated tokens |
+| `dfk_prompt` | — | Override DFK system instruction (also aliased as `dfk_system_prompt`, `dfk_instruction`) |
+| `caption_prompt` | — | Override captioning instruction (also aliased as `caption_system_prompt`, `caption_instruction`) |
+| `system_prompt` | — | Shortcut: routes to `dfk_prompt` for DFK mode or `caption_prompt` for captioning mode |
 
 **Example with custom generation params:**
 

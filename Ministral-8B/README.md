@@ -18,12 +18,11 @@ subfolder: adapter
 ## Features
 
 - **DFK classification** — detects violations from social media screenshots plus `ringkasan`, `klaim`, and `fakta`.
-- **Logits label probe** — returns MTLA-style percentage scores for `NETRAL`, `DISINFORMASI`, `UJARAN KEBENCIAN`, and `FITNAH`.
 - **Captioning mode** — describes images with the LoRA adapter disabled. Optionally override with `caption_prompt`.
 - **Free-form prompt** — bypasses the DFK template with a custom prompt, optionally with an image.
-- **Free-form messages** — accepts OpenAI-style `messages` array directly, optionally with an image via `image_url`.
-- **Weave tracing** — records request metadata, latency, generated output, logits scores, and the rendered `model_prompt`.
-- **Mistral chat template fallback** — injects a local template if the tokenizer does not provide one.
+- **Mistral chat template fallback** — injects a local `[INST]/[/INST]` template if the tokenizer does not provide one.
+- **Weave tracing** — records request metadata, latency, and generated output when `WANDB_API_KEY` is set.
+- **GPU warmup tracking** — logs `move_to_gpu` time on cold start and includes `gpu_warmup_ms` in the first Weave trace.
 - **CPU memory snapshot** — loads on CPU first, snapshots memory, then moves to GPU on container start.
 
 ## Setup
@@ -79,20 +78,13 @@ modal app logs ministral-8b-ws3
 
 ```json
 {
-  "text": "Label: DISINFORMASI\n\nAnalisis: ...",
-  "tokens_generated": 74,
-  "logits_label": "DISINFORMASI",
-  "logits_scores": {
-    "NETRAL": 3.75,
-    "DISINFORMASI": 77.68,
-    "UJARAN KEBENCIAN": 11.35,
-    "FITNAH": 7.22
-  },
-  "infer_total_ms": 33838
+  "text": "Label: UJARAN KEBENCIAN\n\nAnalisis: ...",
+  "tokens_generated": 60,
+  "infer_total_ms": 74240
 }
 ```
 
-`logits_scores` is an experimental label probe. Scores are relative percentages, not calibrated probabilities. The probe is only added for normal DFK requests; captioning and free-form prompt requests keep the original response shape.
+`infer_total_ms` is the total end-to-end time measured at the endpoint level (includes network + queue + generation).
 
 ### Captioning
 
@@ -115,41 +107,13 @@ modal app logs ministral-8b-ws3
 }
 ```
 
-### Free-form Messages (OpenAI format)
-
-```json
-{
-  "messages": [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "Analyze this content..."}
-  ],
-  "max_new_tokens": 256
-}
-```
-
-With image:
-
-```json
-{
-  "messages": [
-    {"role": "user", "content": [
-      {"type": "image"},
-      {"type": "text", "text": "What is in this image?"}
-    ]}
-  ],
-  "image_url": "https://...",
-  "max_new_tokens": 256
-}
-```
-
 ### Mode Priority
 
 | Priority | Trigger | Mode |
 |----------|---------|------|
-| 1 | `captioning: true` | Captioning (base model) |
-| 2 | `messages` array | Free messages (LoRA) |
-| 3 | `prompt` string | Free prompt (LoRA) |
-| 4 | default | DFK classification (LoRA) |
+| 1 | `captioning: true` | Captioning (base model, adapter disabled) |
+| 2 | `prompt` string | Free prompt (LoRA) |
+| 3 | default | DFK classification (LoRA) |
 
 Field aliases: `summary` → `ringkasan`, `claim` → `klaim`, `fact` → `fakta`. Images via `image_url` or `image_base64`.
 
@@ -158,13 +122,12 @@ Field aliases: `summary` → `ringkasan`, `claim` → `klaim`, `fact` → `fakta
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `max_new_tokens` | 128 | Max tokens to generate |
-| `temperature` | 0.0 | Sampling temperature |
+| `temperature` | 0.0 | Sampling temperature (`0` = greedy) |
 | `top_p` | 0.8 | Nucleus sampling |
 | `top_k` | 20 | Top-k sampling |
+| `min_p` | 0.0 | Min-p sampling |
 | `repetition_penalty` | 1.0 | Repetition penalty |
-| `dfk_prompt` | — | Override DFK system instruction |
 | `caption_prompt` | — | Override captioning instruction |
-| `system_prompt` | — | Shortcut system message for any mode |
 
 ## Architecture
 
@@ -175,14 +138,11 @@ Field aliases: `summary` → `ringkasan`, `claim` → `klaim`, `fact` → `fakta
 | `MinistralServer` | Modal class on L4 GPU. Loads processor/model on CPU, snapshots memory, then moves to GPU as `bfloat16`. |
 | `infer` | FastAPI `POST` endpoint delegating to `MinistralServer().generate.remote(...)`. |
 | HF Volume cache | `modal.Volume` named `ministral-8b-ws3-cache` persists downloaded base model and adapter weights. |
-| Logits probe | Scores fixed labels after the forced `Label: ` prefix using averaged label-token log probabilities, then softmaxes across labels. |
-| Weave trace | Stores request fields, rendered `model_prompt`, generated output, latency, GPU warmup, and logits scores when available. |
 
-**Logits scoring flow:**
-1. Render the DFK chat template used for generation.
-2. Append `Label: ` so logits are measured at the label position.
-3. Score each fixed label token-by-token, averaging log probabilities for multi-token labels.
-4. Softmax the averaged scores and return the top label as `logits_label`.
+**Model loading flow:**
+1. `snap=True` — loads processor and model to CPU concurrently, applies LoRA adapter, sets Mistral chat template fallback → **snapshot taken**
+2. `snap=False` — moves model to GPU (`bfloat16`), logs warmup time, initializes Weave client if `WANDB_API_KEY` is set → ready to serve
+3. Captioning requests use `self.model.disable_adapter()` to run the base model without LoRA
 
 ## Infrastructure
 
