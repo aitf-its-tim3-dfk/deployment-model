@@ -20,6 +20,8 @@ FLASH_ATTN_WHEEL = (
     "flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp312-cp312-linux_x86_64.whl"
 )
 
+CHAT_TEMPLATE_PATH = "/app/qwen3.5_chatml.jinja"
+
 image = (
     modal.Image.from_registry("nvidia/cuda:12.8.0-devel-ubuntu22.04", add_python="3.12")
     .apt_install("git", "build-essential", "ninja-build", "libz3-dev")
@@ -51,6 +53,7 @@ image = (
             "TRANSFORMERS_CACHE": CACHE_DIR,
         }
     )
+    .add_local_file("templates/qwen3.5_chatml.jinja", CHAT_TEMPLATE_PATH)
 )
 
 with image.imports():
@@ -80,6 +83,30 @@ def _load_image_url(image_url: str):
     )
     response.raise_for_status()
     return Image.open(io.BytesIO(response.content)).convert("RGB")
+
+
+def _extract_images_from_messages(messages: list[dict]) -> tuple[list[dict], list]:
+    """Extract image_url blocks from messages, download them, replace with {"type": "image"}."""
+    images = []
+    new_messages = []
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            new_messages.append(msg)
+            continue
+        new_content = []
+        for block in content:
+            if block.get("type") == "image_url":
+                url = (block.get("image_url") or {}).get("url") or block.get("url", "")
+                if url.startswith("data:"):
+                    images.append(_decode_image(url.split(",", 1)[1] if "," in url else url))
+                elif url:
+                    images.append(_load_image_url(url))
+                new_content.append({"type": "image"})
+            else:
+                new_content.append(block)
+        new_messages.append({**msg, "content": new_content})
+    return new_messages, images
 
 
 DFK_INSTRUCTION = (
@@ -177,6 +204,13 @@ class QwenServer:
             f_model = executor.submit(load_model)
             self.processor = f_processor.result()
             self.model = f_model.result()
+
+        with open(CHAT_TEMPLATE_PATH) as f:
+            chat_template = f.read()
+        self.processor.chat_template = chat_template
+        if getattr(self.processor, "tokenizer", None) is not None:
+            self.processor.tokenizer.chat_template = chat_template
+        print(f"[INIT] chat_template loaded from {CHAT_TEMPLATE_PATH}")
 
         if adapter_model_id:
             self.model = PeftModel.from_pretrained(
@@ -295,6 +329,7 @@ class QwenServer:
         dfk_prompt: str | None = None,
         captioning: bool = False,
         caption_prompt: str | None = None,
+        system_role: str | None = None,
         max_new_tokens: int = 128,
         temperature: float = 0.0,
         top_p: float = 0.8,
@@ -318,8 +353,11 @@ class QwenServer:
         elif image_base64:
             pil_image = _decode_image(image_base64)
 
+        images: list | None = None
+
         if messages:
-            pass  # use messages directly below
+            messages, extracted_images = _extract_images_from_messages(messages)
+            images = extracted_images if extracted_images else ([pil_image] if pil_image else None)
         elif captioning:
             if pil_image is None:
                 return {"text": "Error: image_url or image_base64 is required for captioning."}
@@ -327,10 +365,12 @@ class QwenServer:
                 {"type": "image"},
                 {"type": "text", "text": caption_prompt or CAPTIONING_INSTRUCTION},
             ]
+            images = [pil_image]
         elif prompt:
             content = [{"type": "text", "text": prompt}]
             if pil_image is not None:
                 content.append({"type": "image"})
+                images = [pil_image]
         else:
             content = build_dfk_content(
                 ringkasan=ringkasan,
@@ -340,16 +380,19 @@ class QwenServer:
             )
             if pil_image is not None:
                 content.append({"type": "image"})
+                images = [pil_image]
 
         if not messages:
             messages = [{"role": "user", "content": content}]
+
+        if system_role and messages[0].get("role") != "system":
+            messages = [{"role": "system", "content": system_role}] + messages
 
         text = self.processor.apply_chat_template(
             messages,
             add_generation_prompt=True,
             tokenize=False,
         )
-        images = [pil_image] if pil_image is not None else None
         inputs = self.processor(
             text=[text],
             images=images,
@@ -388,6 +431,7 @@ class QwenServer:
                         "ringkasan": ringkasan, "klaim": klaim, "fakta": fakta,
                         "prompt": prompt, "dfk_prompt": dfk_prompt,
                         "caption_prompt": caption_prompt,
+                        "system_role": system_role,
                         "model_prompt": text,
                         "messages_input": messages if mode == "messages" else None,
                         "max_new_tokens": max_new_tokens,
@@ -472,6 +516,7 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
         dfk_prompt=dfk_prompt,
         captioning=captioning,
         caption_prompt=caption_prompt,
+        system_role=payload.get("system_role") or None,
         max_new_tokens=int(payload.get("max_new_tokens", 128)),
         temperature=float(payload.get("temperature", 0.0)),
         top_p=float(payload.get("top_p", 0.8)),

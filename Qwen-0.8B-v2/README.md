@@ -154,14 +154,60 @@ With image:
 }
 ```
 
+With multiple images using OpenAI-style `image_url` blocks:
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": [
+      {"type": "image_url", "image_url": {"url": "https://...image1..."}},
+      {"type": "image_url", "image_url": {"url": "https://...image2..."}},
+      {"type": "text", "text": "Bandingkan kedua gambar ini."}
+    ]}
+  ],
+  "max_new_tokens": 256
+}
+```
+
+Multi-turn conversation with assistant messages:
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Apa itu disinformasi?"},
+    {"role": "assistant", "content": "Disinformasi adalah penyebaran informasi yang salah secara sengaja."},
+    {"role": "user", "content": "Berikan contohnya."}
+  ],
+  "max_new_tokens": 256
+}
+```
+
+You can also still use `{"type": "image"}` placeholders combined with the top-level `image_url` parameter (legacy format).
+
+### Custom System Role
+
+Inject a system message into any mode via `system_role`:
+
+```json
+{
+  "ringkasan": "...",
+  "klaim": "...",
+  "fakta": "...",
+  "system_role": "Kamu adalah classifier konten DFK. Jawab singkat.",
+  "max_new_tokens": 128
+}
+```
+
+If the `messages` array already contains a `{"role": "system"}` entry, `system_role` is ignored.
+
 ### Mode Priority
 
-| Priority | Trigger | Mode |
-|----------|---------|------|
-| 1 | `captioning: true` | Captioning (base model) |
-| 2 | `messages` array | Free messages (LoRA) |
-| 3 | `prompt` string | Free prompt (LoRA) |
-| 4 | default | DFK classification (LoRA) |
+| Priority | Trigger | Mode | Adapter |
+|----------|---------|------|---------|
+| 1 | `captioning: true` | Captioning | disabled |
+| 2 | `messages` array | Free messages | disabled |
+| 3 | `prompt` string | Free prompt | disabled |
+| 4 | default | DFK classification | active |
 
 ### Field Aliases
 
@@ -177,6 +223,7 @@ With image:
 |-------|------|-------------|
 | `image_url` | string | Public image URL |
 | `image_base64` | string | Base64-encoded image (data URI prefix stripped automatically) |
+| `messages[].content[].image_url` | object | OpenAI-style image URL block, supports multiple images in messages |
 
 ## Architecture
 
@@ -190,11 +237,12 @@ With image:
 | HF Volume cache | `modal.Volume` named `qwen35-ws3-v2-cache` persists downloaded base model and adapter weights across cold starts. |
 | Logits probe | Scores fixed labels after the forced `Label: ` prefix using averaged label-token log probabilities, then softmaxes across labels. |
 | Weave trace | Stores request fields, rendered `model_prompt`, generated output, latency, GPU warmup, and logits scores when available. |
+| Chat template | Uses bundled `templates/qwen3.5_chatml.jinja` inside the Modal image. |
 
 **Model loading flow:**
 1. `snap=True` — downloads weights (cached in Volume), loads processor + model to CPU concurrently via `ThreadPoolExecutor`, wraps with `PeftModel` if LoRA adapter detected → **snapshot taken**
 2. `snap=False` — moves model from CPU → GPU (`bfloat16`) → ready to serve
-3. Captioning requests use `self.model.disable_adapter()` to run the base model without LoRA
+3. Non-DFK requests (`captioning`, `messages`, and `prompt`) use `self.model.disable_adapter()` to run the base model without LoRA
 
 **Logits scoring flow:**
 1. Render the same DFK chat template used for generation.
