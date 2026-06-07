@@ -27,6 +27,8 @@ FLASH_ATTN_WHEEL = (
     "flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp312-cp312-linux_x86_64.whl"
 )
 
+CHAT_TEMPLATE_PATH = "/app/ministral_3.jinja"
+
 image = (
     modal.Image.from_registry("nvidia/cuda:12.8.0-devel-ubuntu22.04", add_python="3.12")
     .apt_install("git", "build-essential", "ninja-build", "libz3-dev")
@@ -55,6 +57,7 @@ image = (
             "TRANSFORMERS_CACHE": CACHE_DIR,
         }
     )
+    .copy_local_file("templates/ministral_3.jinja", CHAT_TEMPLATE_PATH)
 )
 
 with image.imports():
@@ -85,26 +88,6 @@ def _load_image_url(image_url: str):
     response.raise_for_status()
     return Image.open(io.BytesIO(response.content)).convert("RGB")
 
-
-# Fallback chat template for Mistral VLM tokenizers that don't ship one
-MISTRAL_VLM_CHAT_TEMPLATE = (
-    "{{ bos_token }}"
-    "{% for message in messages %}"
-    "{% if message['role'] == 'user' %}"
-    "[INST] "
-    "{% if message['content'] is string %}{{ message['content'] }}"
-    "{% else %}"
-    "{% for item in message['content'] %}"
-    "{% if item['type'] == 'text' %}{{ item['text'] }}"
-    "{% elif item['type'] == 'image' %}[IMG]"
-    "{% endif %}"
-    "{% endfor %}"
-    "{% endif %}"
-    " [/INST]"
-    "{% elif message['role'] == 'assistant' %}{{ message['content'] }}{{ eos_token }}"
-    "{% endif %}"
-    "{% endfor %}"
-)
 
 DFK_INSTRUCTION = (
     "Anda adalah seorang analis konten media sosial ahli. "
@@ -205,27 +188,9 @@ class MinistralServer:
             self.processor = f_processor.result()
             self.model = f_model.result()
 
-        # Prefer chat_template.jinja from adapter folder (matches training format exactly)
-        chat_template_loaded = False
-        if adapter_model_id:
-            try:
-                chat_template_path = hf_hub_download(
-                    repo_id=MODEL_ID,
-                    filename="chat_template.jinja",
-                    subfolder=ADAPTER_SUBFOLDER,
-                    token=token,
-                    cache_dir=CACHE_DIR,
-                )
-                with open(chat_template_path) as f:
-                    self.processor.tokenizer.chat_template = f.read()
-                chat_template_loaded = True
-                print("[INIT] chat_template loaded from adapter/chat_template.jinja")
-            except Exception as e:
-                print(f"[INIT] chat_template.jinja not found, will use fallback: {e}")
-
-        if not chat_template_loaded and not getattr(self.processor.tokenizer, "chat_template", None):
-            self.processor.tokenizer.chat_template = MISTRAL_VLM_CHAT_TEMPLATE
-            print("[INIT] using hardcoded MISTRAL_VLM_CHAT_TEMPLATE fallback")
+        with open(CHAT_TEMPLATE_PATH) as f:
+            self.processor.tokenizer.chat_template = f.read()
+        print(f"[INIT] chat_template loaded from {CHAT_TEMPLATE_PATH}")
 
         if adapter_model_id:
             self.model = PeftModel.from_pretrained(
