@@ -150,6 +150,31 @@ Multiple images — pass multiple `image_url` blocks in content:
 }
 ```
 
+Multi-turn conversation with assistant messages:
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Apa itu disinformasi?"},
+    {"role": "assistant", "content": "Disinformasi adalah penyebaran informasi yang salah secara sengaja."},
+    {"role": "user", "content": "Berikan contohnya."}
+  ],
+  "max_new_tokens": 256
+}
+```
+
+Override system prompt:
+
+```json
+{
+  "messages": [
+    {"role": "system", "content": "Kamu asisten yang menjawab dalam satu kalimat saja."},
+    {"role": "user", "content": "Apa itu disinformasi?"}
+  ],
+  "max_new_tokens": 128
+}
+```
+
 You can also still use `{"type": "image"}` placeholders combined with the top-level `image_url` parameter (legacy format).
 
 ### Custom System Role
