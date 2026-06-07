@@ -316,6 +316,7 @@ class MinistralCPTServer:
         dfk_prompt: str | None = None,
         captioning: bool = False,
         caption_prompt: str | None = None,
+        system_role: str | None = None,
         max_new_tokens: int = 128,
         temperature: float = 0.0,
         top_p: float = 0.8,
@@ -364,6 +365,9 @@ class MinistralCPTServer:
 
         if not messages:
             messages = [{"role": "user", "content": content}]
+
+        if system_role and messages[0].get("role") != "system":
+            messages = [{"role": "system", "content": system_role}] + messages
 
         text = self.processor.tokenizer.apply_chat_template(
             messages,
@@ -489,6 +493,7 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
         dfk_prompt=dfk_prompt,
         captioning=captioning,
         caption_prompt=caption_prompt,
+        system_role=payload.get("system_role") or None,
         max_new_tokens=int(payload.get("max_new_tokens", 128)),
         temperature=float(payload.get("temperature", 0.0)),
         top_p=float(payload.get("top_p", 0.8)),
