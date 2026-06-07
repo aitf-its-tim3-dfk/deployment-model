@@ -6,7 +6,7 @@ import modal
 
 
 APP_NAME = "qwen35-ws3-v2"
-MODEL_ID = "aitf-komdigi/KomdigiITS-0.8B-DFK-MultimodalClassification"
+MODEL_ID = "aitf-its-tim3-dfk/KomdigiITS-0.8B-DFK-MultimodalClassification"
 CACHE_DIR = "/cache/huggingface"
 ADAPTER_SUBFOLDER = "adapter"
 LABELS = ["NETRAL", "DISINFORMASI", "UJARAN KEBENCIAN", "FITNAH"]
