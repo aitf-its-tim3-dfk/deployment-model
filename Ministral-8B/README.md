@@ -6,16 +6,14 @@ The model performs social media content violation classification (DFK), returnin
 
 ## Adapter
 
-This deployment expects the LoRA adapter under:
-
 ```text
 aitf-its-tim3-dfk/ministral-8b-ws3
 subfolder: adapter
 ```
 
-`modal_app_transformers.py` loads `adapter/adapter_config.json`, reads `base_model_name_or_path` (`unsloth/Ministral-3-8B-Base-2512`), loads the base model, and applies the LoRA adapter with `PeftModel.from_pretrained(..., subfolder="adapter")`.
+Loads `adapter/adapter_config.json`, reads `base_model_name_or_path` (`unsloth/Ministral-3-8B-Base-2512`), loads the base model, and applies the LoRA adapter with `PeftModel.from_pretrained(..., subfolder="adapter")`.
 
-The adapter folder also contains `chat_template.jinja` — the exact Jinja template used during fine-tuning. It is loaded at startup and set on the tokenizer to ensure inference format matches training. If the file is not found, a hardcoded `[INST]/[/INST]` fallback is used instead.
+**Chat template:** Bundled as `templates/ministral_3.jinja` in this repo — copied into the Modal image at build time and loaded at startup. Identical to `adapter/chat_template.jinja` from the HF repo and `sita/templates/ministral_3.jinja` used during training.
 
 ## Features
 
@@ -23,9 +21,11 @@ The adapter folder also contains `chat_template.jinja` — the exact Jinja templ
 - **Logits label probe** — returns softmax percentage scores for `NETRAL`, `DISINFORMASI`, `UJARAN KEBENCIAN`, and `FITNAH` alongside the generated response.
 - **Captioning mode** — describes images with the LoRA adapter disabled. Optionally override with `caption_prompt`.
 - **Free-form prompt** — bypasses the DFK template with a custom prompt, optionally with an image.
-- **Free-form messages** — accepts OpenAI-style `messages` array directly, optionally with an image.
-- **Custom DFK instruction** — override the default system prompt via `dfk_prompt` or the `system_prompt` shortcut.
-- **Adapter chat template** — loads `adapter/chat_template.jinja` from HF at startup, matching the training format exactly (`[SYSTEM_PROMPT]...[/SYSTEM_PROMPT]` + `[INST]...[/INST]`).
+- **Free-form messages** — accepts OpenAI-style `messages` array with text and images.
+- **Multi-image support** — `{"type": "image_url", "image_url": {"url": "..."}}` blocks in messages are downloaded and passed as a list to the model.
+- **Custom system role** — inject `{"role": "system"}` into the conversation via `system_role` parameter.
+- **Custom DFK instruction** — override the user-message instruction via `dfk_prompt` or the `system_prompt` shortcut.
+- **Bundled chat template** — `templates/ministral_3.jinja` baked into the image, no HF download at runtime.
 - **Weave tracing** — records request metadata, rendered `model_prompt`, latency, logits scores, and GPU warmup when `WANDB_API_KEY` is set.
 - **GPU warmup tracking** — logs `move_to_gpu` time on cold start and includes `gpu_warmup_ms` in the first Weave trace.
 - **CPU memory snapshot** — loads on CPU first, snapshots memory, then moves to GPU on container start.
@@ -121,20 +121,52 @@ modal app logs ministral-8b-ws3
 
 ### Free-form Messages (OpenAI format)
 
+Single image via `image_url` block:
+
 ```json
 {
   "messages": [
     {"role": "user", "content": [
-      {"type": "image"},
+      {"type": "image_url", "image_url": {"url": "https://..."}},
       {"type": "text", "text": "Analisis gambar ini dalam Bahasa Indonesia."}
     ]}
   ],
-  "image_url": "https://...",
   "max_new_tokens": 256
 }
 ```
 
-> **Note:** When combining `messages` with `image_url`, the user message content must include `{"type": "image"}` as a placeholder. Passing `image_url` alongside a text-only `messages` array will cause an error.
+Multiple images — pass multiple `image_url` blocks in content:
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": [
+      {"type": "image_url", "image_url": {"url": "https://...image1..."}},
+      {"type": "image_url", "image_url": {"url": "https://...image2..."}},
+      {"type": "text", "text": "Bandingkan kedua gambar ini."}
+    ]}
+  ],
+  "max_new_tokens": 256
+}
+```
+
+You can also still use `{"type": "image"}` placeholders combined with the top-level `image_url` parameter (legacy format).
+
+### Custom System Role
+
+Inject a system message into any mode via `system_role`:
+
+```json
+{
+  "ringkasan": "...",
+  "klaim": "...",
+  "fakta": "...",
+  "system_role": "Kamu adalah classifier konten DFK. Jawab singkat.",
+  "max_new_tokens": 128
+}
+```
+
+If the `messages` array already contains a `{"role": "system"}` entry, `system_role` is ignored.
 
 ### Mode Priority
 
@@ -145,7 +177,7 @@ modal app logs ministral-8b-ws3
 | 3 | `prompt` string | Free prompt (LoRA) |
 | 4 | default | DFK classification (LoRA) |
 
-Field aliases: `summary` → `ringkasan`, `claim` → `klaim`, `fact` → `fakta`. Images via `image_url` or `image_base64`.
+Field aliases: `summary` → `ringkasan`, `claim` → `klaim`, `fact` → `fakta`. Images via `image_url`, `image_base64`, or `image_url` blocks inside messages.
 
 ### Optional Parameters
 
@@ -157,7 +189,8 @@ Field aliases: `summary` → `ringkasan`, `claim` → `klaim`, `fact` → `fakta
 | `top_k` | 20 | Top-k sampling |
 | `min_p` | 0.0 | Min-p sampling |
 | `repetition_penalty` | 1.0 | Repetition penalty |
-| `dfk_prompt` | — | Override DFK system instruction (also aliased as `dfk_system_prompt`, `dfk_instruction`) |
+| `system_role` | — | Inject `{"role": "system"}` into the conversation |
+| `dfk_prompt` | — | Override DFK instruction in user message (also aliased as `dfk_system_prompt`, `dfk_instruction`) |
 | `caption_prompt` | — | Override captioning instruction (also aliased as `caption_system_prompt`, `caption_instruction`) |
 | `system_prompt` | — | Shortcut: routes to `dfk_prompt` for DFK mode or `caption_prompt` for captioning mode |
 
@@ -170,12 +203,13 @@ Field aliases: `summary` → `ringkasan`, `claim` → `klaim`, `fact` → `fakta
 | `MinistralServer` | Modal class on L4 GPU. Loads processor/model on CPU, snapshots memory, then moves to GPU as `bfloat16`. |
 | `infer` | FastAPI `POST` endpoint delegating to `MinistralServer().generate.remote(...)`. |
 | HF Volume cache | `modal.Volume` named `ministral-8b-ws3-cache` persists downloaded base model and adapter weights. |
-| Chat template | `adapter/chat_template.jinja` loaded from HF at startup. Uses `[SYSTEM_PROMPT]...[/SYSTEM_PROMPT]` + `[INST]...[/INST]` format matching the fine-tuning setup. |
+| Chat template | `templates/ministral_3.jinja` bundled into the image. Uses `[SYSTEM_PROMPT]...[/SYSTEM_PROMPT]` + `[INST]...[/INST]` format matching fine-tuning. |
+| `_extract_images_from_messages` | Scans message content for `image_url` blocks, downloads each, replaces with `{"type": "image"}` placeholder. |
 | Logits probe | Scores fixed labels at the `Label: ` position using averaged log probabilities, then softmaxes across labels. |
-| Weave trace | Stores request fields, rendered `model_prompt`, generated output, latency, GPU warmup, and logits scores. |
+| Weave trace | Stores request fields, rendered `model_prompt`, generated output, latency, GPU warmup, and logits scores. Project: `Aitf-dfk-3/ministral`. |
 
 **Model loading flow:**
-1. `snap=True` — loads processor + model to CPU concurrently, downloads `adapter/chat_template.jinja` and sets it on the tokenizer, applies LoRA adapter, pre-computes label token sequences → **snapshot taken**
+1. `snap=True` — loads processor + model to CPU concurrently, loads `ministral_3.jinja` and sets it on the tokenizer, applies LoRA adapter, pre-computes label token sequences → **snapshot taken**
 2. `snap=False` — moves model to GPU (`bfloat16`), logs warmup time, initializes Weave client if `WANDB_API_KEY` is set → ready to serve
 3. Captioning requests use `self.model.disable_adapter()` to run the base model without LoRA
 
