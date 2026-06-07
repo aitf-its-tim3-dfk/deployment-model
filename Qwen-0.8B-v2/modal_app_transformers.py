@@ -412,11 +412,11 @@ class QwenServer:
 
         t0 = time.time()
         with torch.inference_mode():
-            if captioning:
+            if mode == "dfk":
+                generated_ids = self.model.generate(**inputs, **generation_kwargs)
+            else:
                 with self.model.disable_adapter():
                     generated_ids = self.model.generate(**inputs, **generation_kwargs)
-            else:
-                generated_ids = self.model.generate(**inputs, **generation_kwargs)
         elapsed_ms = int((time.time() - t0) * 1000)
 
         new_token_ids = generated_ids[:, inputs["input_ids"].shape[-1]:]
