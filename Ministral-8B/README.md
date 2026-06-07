@@ -20,8 +20,8 @@ Loads `adapter/adapter_config.json`, reads `base_model_name_or_path` (`unsloth/M
 - **DFK classification** — detects violations from social media screenshots plus `ringkasan`, `klaim`, and `fakta`.
 - **Logits label probe** — returns softmax percentage scores for `NETRAL`, `DISINFORMASI`, `UJARAN KEBENCIAN`, and `FITNAH` alongside the generated response.
 - **Captioning mode** — describes images with the LoRA adapter disabled. Optionally override with `caption_prompt`.
-- **Free-form prompt** — bypasses the DFK template with a custom prompt, optionally with an image.
-- **Free-form messages** — accepts OpenAI-style `messages` array with text and images.
+- **Free-form prompt** — bypasses the DFK template with a custom prompt, optionally with an image. Runs on base model (adapter disabled).
+- **Free-form messages** — accepts OpenAI-style `messages` array with text and images. Runs on base model (adapter disabled).
 - **Multi-image support** — `{"type": "image_url", "image_url": {"url": "..."}}` blocks in messages are downloaded and passed as a list to the model.
 - **Custom system role** — inject `{"role": "system"}` into the conversation via `system_role` parameter.
 - **Custom DFK instruction** — override the user-message instruction via `dfk_prompt` or the `system_prompt` shortcut.
@@ -170,12 +170,12 @@ If the `messages` array already contains a `{"role": "system"}` entry, `system_r
 
 ### Mode Priority
 
-| Priority | Trigger | Mode |
-|----------|---------|------|
-| 1 | `captioning: true` | Captioning (base model, adapter disabled) |
-| 2 | `messages` array | Free messages (LoRA) |
-| 3 | `prompt` string | Free prompt (LoRA) |
-| 4 | default | DFK classification (LoRA) |
+| Priority | Trigger | Mode | Adapter |
+|----------|---------|------|---------|
+| 1 | `captioning: true` | Captioning | ❌ disabled |
+| 2 | `messages` array | Free messages | ❌ disabled |
+| 3 | `prompt` string | Free prompt | ❌ disabled |
+| 4 | default | DFK classification | ✅ active |
 
 Field aliases: `summary` → `ringkasan`, `claim` → `klaim`, `fact` → `fakta`. Images via `image_url`, `image_base64`, or `image_url` blocks inside messages.
 
@@ -211,7 +211,7 @@ Field aliases: `summary` → `ringkasan`, `claim` → `klaim`, `fact` → `fakta
 **Model loading flow:**
 1. `snap=True` — loads processor + model to CPU concurrently, loads `ministral_3.jinja` and sets it on the tokenizer, applies LoRA adapter, pre-computes label token sequences → **snapshot taken**
 2. `snap=False` — moves model to GPU (`bfloat16`), logs warmup time, initializes Weave client if `WANDB_API_KEY` is set → ready to serve
-3. Captioning requests use `self.model.disable_adapter()` to run the base model without LoRA
+3. Only DFK mode runs with the LoRA adapter active. Captioning, messages, and prompt modes all use `self.model.disable_adapter()` to run the base model.
 
 **Logits scoring flow:**
 1. Render the DFK chat template used for generation.
