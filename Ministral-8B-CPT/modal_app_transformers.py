@@ -89,6 +89,30 @@ def _load_image_url(image_url: str):
     return Image.open(io.BytesIO(response.content)).convert("RGB")
 
 
+def _extract_images_from_messages(messages: list[dict]) -> tuple[list[dict], list]:
+    """Extract image_url blocks from messages, download them, replace with {"type": "image"}."""
+    images = []
+    new_messages = []
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            new_messages.append(msg)
+            continue
+        new_content = []
+        for block in content:
+            if block.get("type") == "image_url":
+                url = (block.get("image_url") or {}).get("url") or block.get("url", "")
+                if url.startswith("data:"):
+                    images.append(_decode_image(url.split(",", 1)[1] if "," in url else url))
+                elif url:
+                    images.append(_load_image_url(url))
+                new_content.append({"type": "image"})
+            else:
+                new_content.append(block)
+        new_messages.append({**msg, "content": new_content})
+    return new_messages, images
+
+
 DFK_INSTRUCTION = (
     "Anda adalah seorang analis konten media sosial ahli. "
     "Diberikan tangkapan layar dari sebuah unggahan media sosial dan metadata berupa "
@@ -340,8 +364,11 @@ class MinistralCPTServer:
         elif image_base64:
             pil_image = _decode_image(image_base64)
 
+        images: list | None = None
+
         if messages:
-            pass
+            messages, extracted_images = _extract_images_from_messages(messages)
+            images = extracted_images if extracted_images else ([pil_image] if pil_image else None)
         elif captioning:
             if pil_image is None:
                 return {"text": "Error: image_url or image_base64 is required for captioning."}
@@ -349,10 +376,12 @@ class MinistralCPTServer:
                 {"type": "image"},
                 {"type": "text", "text": caption_prompt or CAPTIONING_INSTRUCTION},
             ]
+            images = [pil_image]
         elif prompt:
             content = [{"type": "text", "text": prompt}]
             if pil_image is not None:
                 content.append({"type": "image"})
+                images = [pil_image]
         else:
             content = build_dfk_content(
                 ringkasan=ringkasan,
@@ -362,6 +391,7 @@ class MinistralCPTServer:
             )
             if pil_image is not None:
                 content.append({"type": "image"})
+                images = [pil_image]
 
         if not messages:
             messages = [{"role": "user", "content": content}]
@@ -374,7 +404,6 @@ class MinistralCPTServer:
             add_generation_prompt=True,
             tokenize=False,
         )
-        images = [pil_image] if pil_image is not None else None
         inputs = self.processor(
             text=[text],
             images=images,
