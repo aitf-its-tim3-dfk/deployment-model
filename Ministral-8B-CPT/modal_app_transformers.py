@@ -57,7 +57,7 @@ image = (
             "TRANSFORMERS_CACHE": CACHE_DIR,
         }
     )
-    .copy_local_file("templates/ministral_3.jinja", CHAT_TEMPLATE_PATH)
+    .add_local_file("templates/ministral_3.jinja", CHAT_TEMPLATE_PATH)
 )
 
 with image.imports():
