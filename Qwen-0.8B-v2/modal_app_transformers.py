@@ -118,7 +118,7 @@ DFK_INSTRUCTION = (
     "Diberikan tangkapan layar dari sebuah unggahan media sosial dan metadata berupa "
     "ringkasan, klaim, serta fakta pembanding. Tentukan label kategori pelanggaran "
     "dan berikan analisis detail mengenai pelanggaran yang ditemukan. "
-    "Jawab hanya dengan format: Label: <label> lalu Analisis: <analisis>."
+    # "Jawab hanya dengan format: Label: <label> lalu Analisis: <analisis>."
 )
 
 CAPTIONING_INSTRUCTION = (

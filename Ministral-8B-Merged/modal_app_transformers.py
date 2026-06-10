@@ -118,7 +118,7 @@ DFK_INSTRUCTION = (
     "Diberikan tangkapan layar dari sebuah unggahan media sosial dan metadata berupa "
     "ringkasan, klaim, serta fakta pembanding. Tentukan label kategori pelanggaran "
     "dan berikan analisis detail mengenai pelanggaran yang ditemukan. "
-    "Jawab hanya dengan format: Label: <label> lalu Analisis: <analisis>."
+    # "Jawab hanya dengan format: Label: <label> lalu Analisis: <analisis>."
 )
 
 CAPTIONING_INSTRUCTION = (
@@ -377,6 +377,7 @@ class MinistralMergedServer:
         system_role: str | None = None,
         text_classification: bool = False,
         text_classification_prompt: str | None = None,
+        adapter_messages: bool = False,
         max_new_tokens: int = 128,
         temperature: float = 0.0,
         top_p: float = 0.8,
@@ -390,7 +391,7 @@ class MinistralMergedServer:
         import time as _time
         t_total = _time.time()
 
-        mode = "text_classification" if text_classification else ("captioning" if captioning else ("messages" if messages else ("prompt" if prompt else "dfk")))
+        mode = "text_classification" if text_classification else ("adapter_messages" if adapter_messages else ("captioning" if captioning else ("messages" if messages else ("prompt" if prompt else "dfk"))))
         img_ref = image_url or ("[base64]" if image_base64 else None)
         print(f"[INPUT] mode={mode} image={img_ref} ringkasan={ringkasan!r} klaim={klaim!r} fakta={fakta!r} prompt={prompt!r} max_new_tokens={max_new_tokens} temperature={temperature}")
 
@@ -484,8 +485,9 @@ class MinistralMergedServer:
                         "prompt": prompt, "dfk_prompt": dfk_prompt,
                         "caption_prompt": caption_prompt,
                         "text_classification_prompt": text_classification_prompt,
+                        "adapter_messages": adapter_messages,
                         "model_prompt": text,
-                        "messages_input": messages if mode == "messages" else None,
+                        "messages_input": messages if mode in {"messages", "adapter_messages"} else None,
                         "max_new_tokens": max_new_tokens,
                         "temperature": temperature,
                     },
@@ -495,7 +497,7 @@ class MinistralMergedServer:
 
         t0 = time.time()
         with torch.inference_mode():
-            if mode in {"dfk", "text_classification"}:
+            if mode in {"dfk", "text_classification", "adapter_messages"}:
                 generated_ids = self.model.generate(**inputs, **generation_kwargs)
             else:
                 with self.model.disable_adapter():
@@ -549,6 +551,11 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
         or payload.get("dfk1", False)
         or payload.get("mode") in {"text_classification", "dfk_text", "dfk1"}
     )
+    adapter_messages = bool(
+        payload.get("adapter_messages", False)
+        or payload.get("dfk_messages", False)
+        or payload.get("mode") in {"adapter_messages", "dfk_messages"}
+    )
     system_prompt = payload.get("system_prompt") or None
     dfk_prompt = (
         payload.get("dfk_prompt")
@@ -584,6 +591,7 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
         system_role=payload.get("system_role") or None,
         text_classification=text_classification,
         text_classification_prompt=text_classification_prompt,
+        adapter_messages=adapter_messages,
         max_new_tokens=int(payload.get("max_new_tokens", 128)),
         temperature=float(payload.get("temperature", 0.0)),
         top_p=float(payload.get("top_p", 0.8)),
@@ -607,6 +615,7 @@ def main(
     caption_prompt: str | None = None,
     text_classification: bool = False,
     text_classification_prompt: str | None = None,
+    adapter_messages: bool = False,
     max_new_tokens: int = 256,
 ):
     result = MinistralMergedServer().generate.remote(
@@ -620,6 +629,7 @@ def main(
         caption_prompt=caption_prompt,
         text_classification=text_classification,
         text_classification_prompt=text_classification_prompt,
+        adapter_messages=adapter_messages,
         max_new_tokens=max_new_tokens,
     )
     print(result["text"])

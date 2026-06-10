@@ -19,10 +19,11 @@ The HF repo also contains a full merged `model.safetensors`, but this Modal app 
 | Priority | Trigger | Mode | Adapter | Training format |
 |----------|---------|------|---------|-----------------|
 | 1 | `text_classification: true`, `dfk_text: true`, `dfk1: true`, or `mode: "text_classification"` | DFK-1 text classification | active | raw `dfk_text_dataset.py` format |
-| 2 | `captioning: true` | Captioning | disabled | base model |
-| 3 | `messages` array | Free messages | disabled | base model |
-| 4 | `prompt` string | Free prompt | disabled | base model |
-| 5 | default | DFK-3 multimodal classification | active | existing `ringkasan` / `klaim` / `fakta` format |
+| 2 | `adapter_messages: true`, `dfk_messages: true`, or `mode: "adapter_messages"` | Experimental free messages with adapter | active | OpenAI messages through DFK adapter |
+| 3 | `captioning: true` | Captioning | disabled | base model |
+| 4 | `messages` array | Free messages | disabled | base model |
+| 5 | `prompt` string | Free prompt | disabled | base model |
+| 6 | default | DFK-3 multimodal classification | active | existing `ringkasan` / `klaim` / `fakta` format |
 
 ## DFK-3 Multimodal Classification
 
@@ -150,6 +151,25 @@ Captioning, free-form prompt, and free-form messages are still available and run
   "max_new_tokens": 256
 }
 ```
+
+### Experimental Adapter Messages
+
+Same input shape as free-form messages, but keeps the DFK adapter active for experiments:
+
+```json
+{
+  "adapter_messages": true,
+  "messages": [
+    {"role": "user", "content": [
+      {"type": "image_url", "image_url": {"url": "https://..."}},
+      {"type": "text", "text": "Analisis konten ini dengan adapter DFK."}
+    ]}
+  ],
+  "max_new_tokens": 256
+}
+```
+
+Aliases: `dfk_messages: true` or `mode: "adapter_messages"` / `mode: "dfk_messages"`.
 
 ## Commands
 

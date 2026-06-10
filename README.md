@@ -14,7 +14,7 @@ Modal deployments for DFK (social media content violation classification) models
 
 ## Input Modes
 
-All transformer deployments support the standard DFK multimodal, captioning, prompt, and messages modes. `Ministral-8B-Merged` additionally supports DFK-1 text classification.
+All transformer deployments support the standard DFK multimodal, captioning, prompt, and messages modes. `Ministral-8B-Merged` additionally supports DFK-1 text classification and experimental adapter-backed messages.
 
 | Mode | Trigger | Adapter |
 |------|---------|---------|
@@ -23,8 +23,9 @@ All transformer deployments support the standard DFK multimodal, captioning, pro
 | Free-form prompt | `prompt` field | disabled |
 | Free-form messages | `messages` array (OpenAI format) | disabled |
 | DFK-1 text classification (`Ministral-8B-Merged` only) | `text_classification: true` or `mode: "dfk_text"` | active |
+| Experimental adapter messages (`Ministral-8B-Merged` only) | `adapter_messages: true`, `dfk_messages: true`, or `mode: "adapter_messages"` | active |
 
-`messages` supports OpenAI-style image blocks such as `{"type": "image_url", "image_url": {"url": "https://..."}}` for multi-image requests. You can inject a system message into any mode with `system_role`.
+`messages` supports OpenAI-style image blocks such as `{"type": "image_url", "image_url": {"url": "https://..."}}` for multi-image requests. You can inject a system message into any mode with `system_role`. Use `adapter_messages` only for experiments where free-form messages should run with the DFK adapter enabled.
 
 ## Setup
 
