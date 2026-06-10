@@ -221,6 +221,53 @@ Field aliases: `summary` → `ringkasan`, `claim` → `klaim`, `fact` → `fakta
 | `caption_prompt` | — | Override captioning instruction (also aliased as `caption_system_prompt`, `caption_instruction`) |
 | `system_prompt` | — | Shortcut: routes to `dfk_prompt` for DFK mode or `caption_prompt` for captioning mode |
 
+## cURL Examples
+
+DFK classification:
+
+```bash
+curl -X POST "https://<your-modal-username>--ministral-cpt-8b-ws3-infer.modal.run" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ringkasan": "Foto Prabowo dan Teddy di Paris tersebar di Facebook dengan komentar satire.",
+    "klaim": "Prabowo dan Seskab Teddy berada di Paris pada 22 November 2024.",
+    "fakta": "Prabowo melakukan kunjungan kenegaraan ke Prancis pada November 2024.",
+    "image_url": "https://file.garden/aiecke1uOU1ol6tV/jokowi.jpg",
+    "max_new_tokens": 256,
+    "temperature": 0.0
+  }'
+```
+
+Captioning:
+
+```bash
+curl -X POST "https://<your-modal-username>--ministral-cpt-8b-ws3-infer.modal.run" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "captioning": true,
+    "image_url": "https://file.garden/aiecke1uOU1ol6tV/jokowi.jpg",
+    "max_new_tokens": 256,
+    "temperature": 0.0
+  }'
+```
+
+Free-form messages with image:
+
+```bash
+curl -X POST "https://<your-modal-username>--ministral-cpt-8b-ws3-infer.modal.run" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "https://file.garden/aiecke1uOU1ol6tV/jokowi.jpg"}},
+        {"type": "text", "text": "Analisis gambar ini dalam Bahasa Indonesia."}
+      ]}
+    ],
+    "max_new_tokens": 256,
+    "temperature": 0.0
+  }'
+```
+
 ## Architecture
 
 **File:** `Ministral-8B-CPT/modal_app_transformers.py`

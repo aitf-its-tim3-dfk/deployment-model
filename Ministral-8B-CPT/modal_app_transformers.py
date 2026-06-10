@@ -131,8 +131,11 @@ DFK_INSTRUCTION = (
 )
 
 CAPTIONING_INSTRUCTION = (
-    "Jika ada teks di gambar, kutip teksnya terlebih dahulu. "
-    "Kemudian deskripsikan isi gambar dalam satu paragraf menggunakan Bahasa Indonesia."
+    "Baca gambar ini secara teliti dan buat deskripsi faktual dalam Bahasa Indonesia. "
+    "Kutip teks yang terlihat jika ada. "
+    "Jelaskan objek, orang, teks, warna, dan elemen visual lainnya yang tampak. "
+    "Jangan menambahkan opini atau klasifikasi. Jawab langsung dengan deskripsi, "
+    "jangan ulangi instruksi ini."
 )
 
 

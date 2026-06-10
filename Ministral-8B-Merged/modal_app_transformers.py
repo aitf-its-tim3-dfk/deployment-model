@@ -89,6 +89,15 @@ def _load_image_url(image_url: str):
     return Image.open(io.BytesIO(response.content)).convert("RGB")
 
 
+def _image_preview(pil_image):
+    if pil_image is None:
+        return None
+
+    preview = pil_image.copy()
+    preview.thumbnail((512, 512))
+    return preview
+
+
 def _extract_images_from_messages(messages: list[dict]) -> tuple[list[dict], list]:
     """Extract image_url blocks from messages, download them, replace with {"type": "image"}."""
     images = []
@@ -477,10 +486,13 @@ class MinistralMergedServer:
                 from datetime import datetime, timezone, timedelta
                 wib = timezone(timedelta(hours=7))
                 ts = datetime.now(wib).strftime("%Y-%m-%d %H:%M WIB")
+                preview_source = images[0] if images else pil_image
+                image_preview = _image_preview(preview_source)
                 weave_call = self._weave_client.create_call(
                     f"ministral-8b-merged-ws3-generate | {ts}",
                     inputs={
                         "mode": mode, "image": img_ref,
+                        "image_preview": image_preview,
                         "ringkasan": ringkasan, "klaim": klaim, "fakta": fakta,
                         "prompt": prompt, "dfk_prompt": dfk_prompt,
                         "caption_prompt": caption_prompt,
