@@ -1,0 +1,853 @@
+openapi: 3.1.0
+info:
+  title: DFK Model API Reference
+  description: |
+    Unified API reference for three DFK (social media content violation classification) model deployments on Modal.
+
+    | Model | Endpoint |
+    |-------|----------|
+    | **Qwen-0.8B-v2** | `https://dfk-3--qwen35-ws3-v2-infer.modal.run` |
+    | **Ministral-8B-CPT** | `https://dfk-3--ministral-cpt-8b-ws3-infer.modal.run` |
+    | **Ministral-8B-Merged** | `https://dfk-3--ministral-8b-merged-ws3-infer.modal.run` |
+
+    Each model has its own endpoint. The server URL is shown on each operation — click it to change.
+
+    All modes use `POST /` on the respective server.
+  version: 1.0.0
+servers:
+  - url: https://dfk-3--ministral-8b-merged-ws3-infer.modal.run
+    description: Ministral-8B-Merged (Production)
+  - url: https://dfk-3--ministral-cpt-8b-ws3-infer.modal.run
+    description: Ministral-8B-CPT (Production)
+  - url: https://dfk-3--qwen35-ws3-v2-infer.modal.run
+    description: Qwen-0.8B-v2 (Production)
+
+tags:
+  - name: Qwen-0.8B-v2
+    description: |
+      `aitf-its-tim3-dfk/KomdigiITS-0.8B-DFK-MultimodalClassification`
+      — Qwen3.5-0.8B VLM with updated DFK adapter. Lightweight and fast.
+
+      **Endpoint:** `https://dfk-3--qwen35-ws3-v2-infer.modal.run`
+
+      Modes: DFK-3 · Captioning · Free prompt · Messages
+  - name: Ministral-8B-CPT
+    description: |
+      `aitf-its-tim3-dfk/ministral-cpt-8b-ws3`
+      — Ministral-3-8B with continued pre-training (CPT) on domain data, then SFT fine-tuned for DFK.
+
+      **Endpoint:** `https://dfk-3--ministral-cpt-8b-ws3-infer.modal.run`
+
+      Modes: DFK-3 · Captioning · Free prompt · Messages
+  - name: Ministral-8B-Merged
+    description: |
+      `aitf-its-tim3-dfk/ministral-8b-merged-ws3`
+      — Ministral adapter-mode deployment. Loads only the LoRA adapter (`adapter/` subfolder) for full adapter control.
+
+      **Endpoint:** `https://dfk-3--ministral-8b-merged-ws3-infer.modal.run`
+
+      Modes: DFK-3 · DFK-1 text · Captioning · Adapter captioning · Free prompt · Messages · Adapter messages
+
+paths:
+
+  # ─────────────────────────────────────────
+  # QWEN-0.8B-v2
+  # ─────────────────────────────────────────
+
+  /#qwen-v2-dfk-3:
+    post:
+      tags: [Qwen-0.8B-v2]
+      summary: DFK-3 Multimodal Classification
+      description: |
+        Default mode. Pass `ringkasan`, `klaim`, `fakta` — optionally with `image_url`.
+        Returns generated text + MTLA logits scores over 4 labels: `NETRAL` · `DISINFORMASI` · `UJARAN KEBENCIAN` · `FITNAH`
+
+        > **Actual endpoint:** `POST /`
+      operationId: qwen_v2_dfk_3
+      servers:
+        - url: https://dfk-3--qwen35-ws3-v2-infer.modal.run
+          description: Qwen-0.8B-v2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DFKRequest'
+            examples:
+              with_image:
+                summary: With image
+                value:
+                  image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  ringkasan: "Artikel mengklaim vaksin mengandung microchip."
+                  klaim: "Vaksin COVID-19 mengandung microchip pemerintah."
+                  fakta: "WHO dan CDC menyatakan tidak ada microchip dalam vaksin."
+                  max_new_tokens: 128
+                  temperature: 0.0
+              text_only:
+                summary: Text only (no image)
+                value:
+                  ringkasan: "Unggahan berisi ucapan selamat pagi dan ajakan minum kopi."
+                  klaim: "Ucapan selamat pagi dan ajakan minum kopi."
+                  fakta: "Tidak ditemukan klaim faktual. Konten bersifat sapaan umum."
+                  max_new_tokens: 128
+                  temperature: 0.0
+      responses:
+        '200':
+          description: DFK-3 result with MTLA logits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DFKResponse'
+
+  /#qwen-v2-captioning:
+    post:
+      tags: [Qwen-0.8B-v2]
+      summary: Image Captioning
+      description: |
+        Describe an image in Indonesian. Trigger with `captioning: true` + `image_url`. Adapter disabled.
+
+        Default: kutip teks di gambar → deskripsikan dalam satu paragraf Bahasa Indonesia.
+
+        > **Actual endpoint:** `POST /`
+      operationId: qwen_v2_captioning
+      servers:
+        - url: https://dfk-3--qwen35-ws3-v2-infer.modal.run
+          description: Qwen-0.8B-v2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptioningRequest'
+            examples:
+              default:
+                summary: Default instruction
+                value:
+                  captioning: true
+                  image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  max_new_tokens: 256
+              custom:
+                summary: Custom instruction
+                value:
+                  captioning: true
+                  image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  caption_prompt: "List all visible text, then describe the image in one paragraph."
+                  max_new_tokens: 256
+      responses:
+        '200':
+          description: Image caption
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+
+  /#qwen-v2-prompt:
+    post:
+      tags: [Qwen-0.8B-v2]
+      summary: Free-form Prompt
+      description: |
+        Send any prompt. DFK template bypassed, adapter disabled. Image optional.
+
+        > **Actual endpoint:** `POST /`
+      operationId: qwen_v2_prompt
+      servers:
+        - url: https://dfk-3--qwen35-ws3-v2-infer.modal.run
+          description: Qwen-0.8B-v2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptRequest'
+            examples:
+              with_image:
+                summary: Prompt with image
+                value:
+                  prompt: "Identifikasi apakah ada klaim menyesatkan di gambar ini."
+                  image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  max_new_tokens: 256
+                  temperature: 0.0
+      responses:
+        '200':
+          description: Generated text
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+
+  /#qwen-v2-messages:
+    post:
+      tags: [Qwen-0.8B-v2]
+      summary: Messages (OpenAI format)
+      description: |
+        Pass a `messages` array in OpenAI format. Adapter disabled. Supports `image_url` content blocks.
+
+        > **Actual endpoint:** `POST /`
+      operationId: qwen_v2_messages
+      servers:
+        - url: https://dfk-3--qwen35-ws3-v2-infer.modal.run
+          description: Qwen-0.8B-v2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessagesRequest'
+            examples:
+              text:
+                summary: Text conversation
+                value:
+                  messages:
+                    - role: system
+                      content: "Kamu adalah asisten pendeteksi disinformasi."
+                    - role: user
+                      content: "Apa itu disinformasi?"
+                  max_new_tokens: 256
+                  temperature: 0.3
+              with_image:
+                summary: With image
+                value:
+                  messages:
+                    - role: user
+                      content:
+                        - type: image_url
+                          image_url:
+                            url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                        - type: text
+                          text: "Analisis gambar ini."
+                  max_new_tokens: 256
+                  temperature: 0.0
+      responses:
+        '200':
+          description: Generated text
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+
+  # ─────────────────────────────────────────
+  # MINISTRAL-8B-CPT
+  # ─────────────────────────────────────────
+
+  /#cpt-dfk-3:
+    post:
+      tags: [Ministral-8B-CPT]
+      summary: DFK-3 Multimodal Classification
+      description: |
+        Default mode. Pass `ringkasan`, `klaim`, `fakta` — optionally with `image_url`.
+        Returns generated text + MTLA logits scores over 4 labels: `NETRAL` · `DISINFORMASI` · `UJARAN KEBENCIAN` · `FITNAH`
+
+        > **Actual endpoint:** `POST /`
+      operationId: cpt_dfk_3
+      servers:
+        - url: https://dfk-3--ministral-cpt-8b-ws3-infer.modal.run
+          description: Ministral-8B-CPT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DFKRequest'
+            examples:
+              with_image:
+                summary: With image
+                value:
+                  image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  ringkasan: "Artikel mengklaim vaksin mengandung microchip."
+                  klaim: "Vaksin COVID-19 mengandung microchip pemerintah."
+                  fakta: "WHO dan CDC menyatakan tidak ada microchip dalam vaksin."
+                  max_new_tokens: 128
+                  temperature: 0.0
+              text_only:
+                summary: Text only (no image)
+                value:
+                  ringkasan: "Unggahan berisi ucapan selamat pagi dan ajakan minum kopi."
+                  klaim: "Ucapan selamat pagi dan ajakan minum kopi."
+                  fakta: "Tidak ditemukan klaim faktual. Konten bersifat sapaan umum."
+                  max_new_tokens: 128
+                  temperature: 0.0
+      responses:
+        '200':
+          description: DFK-3 result with MTLA logits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DFKResponse'
+              example:
+                text: "Label: disinformasi\n\nAnalisis: Klaim bahwa vaksin mengandung microchip adalah tidak benar dan bertentangan dengan pernyataan resmi dari WHO dan CDC."
+                tokens_generated: 74
+                logits_label: "DISINFORMASI"
+                logits_scores:
+                  NETRAL: 0.48
+                  DISINFORMASI: 85.42
+                  UJARAN KEBENCIAN: 10.58
+                  FITNAH: 3.52
+                infer_total_ms: 13664
+
+  /#cpt-captioning:
+    post:
+      tags: [Ministral-8B-CPT]
+      summary: Image Captioning
+      description: |
+        Describe an image in Indonesian. Trigger with `captioning: true` + `image_url`. Adapter disabled.
+
+        > **Actual endpoint:** `POST /`
+      operationId: cpt_captioning
+      servers:
+        - url: https://dfk-3--ministral-cpt-8b-ws3-infer.modal.run
+          description: Ministral-8B-CPT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptioningRequest'
+            examples:
+              default:
+                summary: Default instruction
+                value:
+                  captioning: true
+                  image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  max_new_tokens: 256
+      responses:
+        '200':
+          description: Image caption
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+
+  /#cpt-prompt:
+    post:
+      tags: [Ministral-8B-CPT]
+      summary: Free-form Prompt
+      description: |
+        Send any prompt. DFK template bypassed, adapter disabled. Image optional.
+
+        > **Actual endpoint:** `POST /`
+      operationId: cpt_prompt
+      servers:
+        - url: https://dfk-3--ministral-cpt-8b-ws3-infer.modal.run
+          description: Ministral-8B-CPT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptRequest'
+            examples:
+              with_image:
+                summary: Prompt with image
+                value:
+                  prompt: "Identifikasi apakah ada klaim menyesatkan di gambar ini."
+                  image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  max_new_tokens: 256
+                  temperature: 0.0
+      responses:
+        '200':
+          description: Generated text
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+
+  /#cpt-messages:
+    post:
+      tags: [Ministral-8B-CPT]
+      summary: Messages (OpenAI format)
+      description: |
+        Pass a `messages` array in OpenAI format. Adapter disabled. Supports `image_url` content blocks.
+
+        > **Actual endpoint:** `POST /`
+      operationId: cpt_messages
+      servers:
+        - url: https://dfk-3--ministral-cpt-8b-ws3-infer.modal.run
+          description: Ministral-8B-CPT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessagesRequest'
+            examples:
+              with_image:
+                summary: With image
+                value:
+                  messages:
+                    - role: user
+                      content:
+                        - type: image_url
+                          image_url:
+                            url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                        - type: text
+                          text: "Analisis gambar ini dan identifikasi klaim yang menyesatkan."
+                  max_new_tokens: 256
+                  temperature: 0.0
+      responses:
+        '200':
+          description: Generated text
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+
+  # ─────────────────────────────────────────
+  # MINISTRAL-8B-MERGED
+  # ─────────────────────────────────────────
+
+  /#merged-dfk-3:
+    post:
+      tags: [Ministral-8B-Merged]
+      summary: DFK-3 Multimodal Classification
+      description: |
+        Default mode. Pass `ringkasan`, `klaim`, `fakta` — optionally with `image_url`.
+        Returns generated text + MTLA logits scores over 4 labels: `NETRAL` · `DISINFORMASI` · `UJARAN KEBENCIAN` · `FITNAH`
+
+        > **Actual endpoint:** `POST /`
+      operationId: merged_dfk_3
+      servers:
+        - url: https://dfk-3--ministral-8b-merged-ws3-infer.modal.run
+          description: Ministral-8B-Merged
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DFKRequest'
+            examples:
+              with_image:
+                summary: With image
+                value:
+                  image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  ringkasan: "Artikel mengklaim vaksin mengandung microchip."
+                  klaim: "Vaksin COVID-19 mengandung microchip pemerintah."
+                  fakta: "WHO dan CDC menyatakan tidak ada microchip dalam vaksin."
+                  max_new_tokens: 128
+                  temperature: 0.0
+      responses:
+        '200':
+          description: DFK-3 result with MTLA logits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DFKResponse'
+              example:
+                text: "Label: disinformasi\n\nAnalisis: Klaim bahwa vaksin mengandung microchip adalah tidak benar dan bertentangan dengan pernyataan resmi dari WHO dan CDC. Informasi ini dapat menimbulkan ketakutan dan keraguan terhadap program vaksinasi."
+                tokens_generated: 74
+                logits_label: "DISINFORMASI"
+                logits_scores:
+                  NETRAL: 0.48
+                  DISINFORMASI: 85.42
+                  UJARAN KEBENCIAN: 10.58
+                  FITNAH: 3.52
+                infer_total_ms: 13664
+
+  /#merged-dfk-1:
+    post:
+      tags: [Ministral-8B-Merged]
+      summary: DFK-1 Text Classification
+      description: |
+        Text-only classification. Trigger with `text_classification: true`. DFK adapter active.
+
+        **5 labels** (not merged): `Fakta` · `Disinformasi` · `Fitnah` · `Ujaran Kebencian` · `Non-DFK`
+
+        > `Fakta` and `Non-DFK` are **not** merged into `Netral` — unlike DFK-3.
+
+        Response format: `Label: **NamaLabel.** penjelasan: ...`
+
+        Aliases: `dfk_text: true` · `dfk1: true` · `mode: "dfk_text"`
+
+        > **Actual endpoint:** `POST /`
+      operationId: merged_dfk_1
+      servers:
+        - url: https://dfk-3--ministral-8b-merged-ws3-infer.modal.run
+          description: Ministral-8B-Merged
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DFK1Request'
+            examples:
+              non_dfk:
+                summary: Non-DFK (sapaan umum)
+                value:
+                  text_classification: true
+                  klaim: "Selamat pagi semuanya, jangan lupa sarapan dan tetap semangat bekerja hari ini."
+                  fakta: "Teks tersebut adalah sapaan dan ajakan umum. Tidak terdapat klaim faktual."
+                  max_new_tokens: 128
+                  temperature: 0.0
+              disinformasi:
+                summary: Disinformasi
+                value:
+                  text_classification: true
+                  klaim: "Vaksin menyebabkan autisme pada anak."
+                  fakta: "Penelitian ilmiah tidak menemukan hubungan antara vaksin dan autisme."
+                  max_new_tokens: 128
+                  temperature: 0.0
+      responses:
+        '200':
+          description: DFK-1 text classification (no logits)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+              example:
+                text: "Label: **Non-DFK.** penjelasan: Teks ini merupakan sapaan umum. Tidak terdapat klaim faktual, disinformasi, fitnah, atau ujaran kebencian."
+                tokens_generated: 52
+                infer_total_ms: 4210
+
+  /#merged-captioning:
+    post:
+      tags: [Ministral-8B-Merged]
+      summary: Image Captioning
+      description: |
+        Describe an image in Indonesian. Trigger with `captioning: true` + `image_url`. Adapter disabled.
+
+        > **Actual endpoint:** `POST /`
+      operationId: merged_captioning
+      servers:
+        - url: https://dfk-3--ministral-8b-merged-ws3-infer.modal.run
+          description: Ministral-8B-Merged
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptioningRequest'
+            examples:
+              default:
+                summary: Default instruction
+                value:
+                  captioning: true
+                  image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  max_new_tokens: 256
+      responses:
+        '200':
+          description: Image caption
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+
+  /#merged-prompt:
+    post:
+      tags: [Ministral-8B-Merged]
+      summary: Free-form Prompt
+      description: |
+        Send any prompt. DFK template bypassed, adapter disabled. Image optional.
+
+        > **Actual endpoint:** `POST /`
+      operationId: merged_prompt
+      servers:
+        - url: https://dfk-3--ministral-8b-merged-ws3-infer.modal.run
+          description: Ministral-8B-Merged
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptRequest'
+            examples:
+              with_image:
+                summary: Prompt with image
+                value:
+                  prompt: "Identifikasi apakah ada klaim menyesatkan di gambar ini."
+                  image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  max_new_tokens: 256
+                  temperature: 0.0
+      responses:
+        '200':
+          description: Generated text
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+
+  /#merged-messages:
+    post:
+      tags: [Ministral-8B-Merged]
+      summary: Messages (OpenAI format)
+      description: |
+        Pass a `messages` array in OpenAI format. Adapter disabled. Supports `image_url` content blocks.
+
+        > **Actual endpoint:** `POST /`
+      operationId: merged_messages
+      servers:
+        - url: https://dfk-3--ministral-8b-merged-ws3-infer.modal.run
+          description: Ministral-8B-Merged
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessagesRequest'
+            examples:
+              with_image:
+                summary: With image
+                value:
+                  messages:
+                    - role: user
+                      content:
+                        - type: image_url
+                          image_url:
+                            url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                        - type: text
+                          text: "Analisis gambar ini dan identifikasi klaim yang menyesatkan."
+                  max_new_tokens: 256
+                  temperature: 0.0
+      responses:
+        '200':
+          description: Generated text
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+
+  /#merged-adapter-messages:
+    post:
+      tags: [Ministral-8B-Merged]
+      summary: Adapter Messages (Experimental)
+      description: |
+        Messages with DFK adapter active. Same shape as free-form messages but adapter stays on.
+
+        Aliases: `dfk_messages: true` · `mode: "adapter_messages"`
+
+        > **Actual endpoint:** `POST /`
+      operationId: merged_adapter_messages
+      servers:
+        - url: https://dfk-3--ministral-8b-merged-ws3-infer.modal.run
+          description: Ministral-8B-Merged
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdapterMessagesRequest'
+            examples:
+              with_image:
+                summary: With image
+                value:
+                  adapter_messages: true
+                  messages:
+                    - role: user
+                      content:
+                        - type: image_url
+                          image_url:
+                            url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                        - type: text
+                          text: "Analisis konten ini dengan adapter DFK aktif."
+                  max_new_tokens: 256
+                  temperature: 0.0
+      responses:
+        '200':
+          description: Generated text (adapter active)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseResponse'
+
+components:
+  schemas:
+
+    GenerationParams:
+      type: object
+      properties:
+        max_new_tokens:
+          type: integer
+          default: 128
+          minimum: 1
+          maximum: 2048
+        temperature:
+          type: number
+          default: 0.0
+          minimum: 0.0
+          maximum: 2.0
+          description: "0 = greedy decoding."
+        top_p:
+          type: number
+          default: 0.8
+        top_k:
+          type: integer
+          default: 20
+        min_p:
+          type: number
+          default: 0.0
+        repetition_penalty:
+          type: number
+          default: 1.0
+          minimum: 1.0
+        system_role:
+          type: string
+          description: Inject a system message (prepended before first message, any mode).
+
+    DFKRequest:
+      allOf:
+        - $ref: '#/components/schemas/GenerationParams'
+        - type: object
+          properties:
+            ringkasan:
+              type: string
+              description: "Post summary. Alias: `summary`."
+            klaim:
+              type: string
+              description: "Core claim. Alias: `claim`."
+            fakta:
+              type: string
+              description: "Fact-check context. Alias: `fact`."
+            image_url:
+              type: string
+              format: uri
+            image_base64:
+              type: string
+            dfk_prompt:
+              type: string
+              description: "Override DFK-3 system instruction."
+
+    DFK1Request:
+      allOf:
+        - $ref: '#/components/schemas/GenerationParams'
+        - type: object
+          required: [text_classification]
+          properties:
+            text_classification:
+              type: boolean
+              enum: [true]
+              description: "Trigger for DFK-1 mode. Aliases: `dfk_text`, `dfk1`."
+            klaim:
+              type: string
+              description: "Claim text. Alias: `claim`."
+            fakta:
+              type: string
+              description: "Reference article. Alias: `fact`."
+            text_classification_prompt:
+              type: string
+              description: "Override DFK-1 system instruction."
+
+    CaptioningRequest:
+      allOf:
+        - $ref: '#/components/schemas/GenerationParams'
+        - type: object
+          required: [captioning]
+          properties:
+            captioning:
+              type: boolean
+              enum: [true]
+            image_url:
+              type: string
+              format: uri
+            image_base64:
+              type: string
+            caption_prompt:
+              type: string
+              description: "Override default captioning instruction."
+
+    PromptRequest:
+      allOf:
+        - $ref: '#/components/schemas/GenerationParams'
+        - type: object
+          required: [prompt]
+          properties:
+            prompt:
+              type: string
+            image_url:
+              type: string
+              format: uri
+            image_base64:
+              type: string
+
+    MessagesRequest:
+      allOf:
+        - $ref: '#/components/schemas/GenerationParams'
+        - type: object
+          required: [messages]
+          properties:
+            messages:
+              type: array
+              items:
+                $ref: '#/components/schemas/Message'
+
+    AdapterMessagesRequest:
+      allOf:
+        - $ref: '#/components/schemas/GenerationParams'
+        - type: object
+          required: [adapter_messages, messages]
+          properties:
+            adapter_messages:
+              type: boolean
+              enum: [true]
+            messages:
+              type: array
+              items:
+                $ref: '#/components/schemas/Message'
+
+    Message:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant]
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                $ref: '#/components/schemas/ContentBlock'
+
+    ContentBlock:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [text, image_url]
+        text:
+          type: string
+        image_url:
+          type: object
+          required: [url]
+          properties:
+            url:
+              type: string
+              format: uri
+
+    BaseResponse:
+      type: object
+      required: [text, tokens_generated, infer_total_ms]
+      properties:
+        text:
+          type: string
+        tokens_generated:
+          type: integer
+          example: 48
+        infer_total_ms:
+          type: integer
+          example: 3800
+
+    DFKResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseResponse'
+        - type: object
+          properties:
+            logits_label:
+              type: string
+              description: MTLA predicted label (DFK-3 only).
+              enum: [NETRAL, DISINFORMASI, "UJARAN KEBENCIAN", FITNAH]
+              example: "DISINFORMASI"
+            logits_scores:
+              type: object
+              description: Softmax confidence per label 0–100 (DFK-3 only).
+              properties:
+                NETRAL:
+                  type: number
+                  example: 0.48
+                DISINFORMASI:
+                  type: number
+                  example: 85.42
+                UJARAN KEBENCIAN:
+                  type: number
+                  example: 10.58
+                FITNAH:
+                  type: number
+                  example: 3.52

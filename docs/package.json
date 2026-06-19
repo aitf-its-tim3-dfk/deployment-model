@@ -1,0 +1,11 @@
+{
+  "name": "dfk-api-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "yaml": "^2.7.1"
+  }
+}
