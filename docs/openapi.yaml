@@ -636,9 +636,9 @@ paths:
                           image_url:
                             url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
                         - type: text
-                          text: "Analisis konten ini dengan adapter DFK aktif."
+                          text: "Analisis gambar yang diberikan secara mendetail. Jelaskan subjek utama, gaya visual atau media yang digunakan, pencahayaan, palet warna, serta latar belakangnya. Tulis deskripsi dalam bentuk narasi yang mengalir, sangat rinci, dan menggunakan bahasa alami tanpa poin-poin atau daftar."
                   max_new_tokens: 256
-                  temperature: 0.0
+                  temperature: 0
       responses:
         '200':
           description: Generated text (adapter active)
