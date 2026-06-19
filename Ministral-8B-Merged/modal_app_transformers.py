@@ -1,9 +1,7 @@
 import base64
 import io
 from typing import Any
-
 import modal
-
 
 APP_NAME = "ministral-8b-merged-ws3"
 MODEL_ID = "aitf-its-tim3-dfk/ministral-8b-merged-ws3"
@@ -131,8 +129,9 @@ DFK_INSTRUCTION = (
 )
 
 CAPTIONING_INSTRUCTION = (
-    "Jika ada teks di gambar, kutip teksnya terlebih dahulu. "
-    "Kemudian deskripsikan isi gambar dalam satu paragraf menggunakan Bahasa Indonesia."
+    "Analisis gambar yang diberikan secara mendetail. Jelaskan subjek utama, gaya visual atau media yang digunakan, "
+    "pencahayaan, palet warna, serta latar belakangnya. Tulis deskripsi dalam bentuk narasi yang mengalir, "
+    "sangat rinci, dan menggunakan bahasa alami tanpa poin-poin atau daftar."
 )
 
 
@@ -197,10 +196,12 @@ def build_dfk_content(
     timeout=600,
     scaledown_window=60,
     volumes={CACHE_DIR: hf_cache},
+    max_containers= 1, 
     enable_memory_snapshot=True,
     secrets=[modal.Secret.from_name("wandb-secret")],
 )
-@modal.concurrent(max_inputs=2)
+
+@modal.concurrent(max_inputs=1)
 class MinistralMergedServer:
     @modal.enter(snap=True)
     def load_to_cpu(self):
@@ -387,6 +388,7 @@ class MinistralMergedServer:
         text_classification: bool = False,
         text_classification_prompt: str | None = None,
         adapter_messages: bool = False,
+        adapter_captioning: bool = False,
         max_new_tokens: int = 128,
         temperature: float = 0.0,
         top_p: float = 0.8,
@@ -400,7 +402,7 @@ class MinistralMergedServer:
         import time as _time
         t_total = _time.time()
 
-        mode = "text_classification" if text_classification else ("adapter_messages" if adapter_messages else ("captioning" if captioning else ("messages" if messages else ("prompt" if prompt else "dfk"))))
+        mode = "text_classification" if text_classification else ("adapter_messages" if adapter_messages else ("adapter_captioning" if adapter_captioning else ("captioning" if captioning else ("messages" if messages else ("prompt" if prompt else "dfk")))))
         img_ref = image_url or ("[base64]" if image_base64 else None)
         print(f"[INPUT] mode={mode} image={img_ref} ringkasan={ringkasan!r} klaim={klaim!r} fakta={fakta!r} prompt={prompt!r} max_new_tokens={max_new_tokens} temperature={temperature}")
 
@@ -497,7 +499,7 @@ class MinistralMergedServer:
                         "prompt": prompt, "dfk_prompt": dfk_prompt,
                         "caption_prompt": caption_prompt,
                         "text_classification_prompt": text_classification_prompt,
-                        "adapter_messages": adapter_messages,
+                        "adapter_messages": mode in {"dfk", "text_classification", "adapter_messages", "adapter_captioning"},
                         "model_prompt": text,
                         "messages_input": messages if mode in {"messages", "adapter_messages"} else None,
                         "max_new_tokens": max_new_tokens,
@@ -509,7 +511,7 @@ class MinistralMergedServer:
 
         t0 = time.time()
         with torch.inference_mode():
-            if mode in {"dfk", "text_classification", "adapter_messages"}:
+            if mode in {"dfk", "text_classification", "adapter_messages", "adapter_captioning"}:
                 generated_ids = self.model.generate(**inputs, **generation_kwargs)
             else:
                 with self.model.disable_adapter():
@@ -568,6 +570,10 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
         or payload.get("dfk_messages", False)
         or payload.get("mode") in {"adapter_messages", "dfk_messages"}
     )
+    adapter_captioning = bool(
+        payload.get("adapter_captioning", False)
+        or payload.get("mode") == "adapter_captioning"
+    )
     system_prompt = payload.get("system_prompt") or None
     dfk_prompt = (
         payload.get("dfk_prompt")
@@ -604,6 +610,7 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
         text_classification=text_classification,
         text_classification_prompt=text_classification_prompt,
         adapter_messages=adapter_messages,
+        adapter_captioning=adapter_captioning,
         max_new_tokens=int(payload.get("max_new_tokens", 128)),
         temperature=float(payload.get("temperature", 0.0)),
         top_p=float(payload.get("top_p", 0.8)),
@@ -628,6 +635,7 @@ def main(
     text_classification: bool = False,
     text_classification_prompt: str | None = None,
     adapter_messages: bool = False,
+    adapter_captioning: bool = False,
     max_new_tokens: int = 256,
 ):
     result = MinistralMergedServer().generate.remote(
@@ -642,6 +650,7 @@ def main(
         text_classification=text_classification,
         text_classification_prompt=text_classification_prompt,
         adapter_messages=adapter_messages,
+        adapter_captioning=adapter_captioning,
         max_new_tokens=max_new_tokens,
     )
     print(result["text"])

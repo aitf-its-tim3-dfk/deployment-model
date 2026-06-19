@@ -309,6 +309,13 @@ paths:
                   captioning: true
                   image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
                   max_new_tokens: 256
+              custom:
+                summary: Custom instruction
+                value:
+                  captioning: true
+                  image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  caption_prompt: "Jika ada teks di gambar, kutip teksnya terlebih dahulu. Kemudian deskripsikan isi gambar dalam satu paragraf menggunakan Bahasa Indonesia."
+                  max_new_tokens: 256
       responses:
         '200':
           description: Image caption
@@ -504,6 +511,10 @@ paths:
       description: |
         Describe an image in Indonesian. Trigger with `captioning: true` + `image_url`. Adapter disabled.
 
+        Default: analisis mendetail — subjek utama, gaya visual, pencahayaan, palet warna, latar belakang. Narasi mengalir tanpa poin-poin.
+
+        Override with `caption_prompt` to change the instruction.
+
         > **Actual endpoint:** `POST /`
       operationId: merged_captioning
       servers:
@@ -521,6 +532,13 @@ paths:
                 value:
                   captioning: true
                   image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  max_new_tokens: 256
+              custom:
+                summary: Custom instruction
+                value:
+                  captioning: true
+                  image_url: "https://file.garden/aiecke1uOU1ol6tV/HOAKS-Vaksin-Covid-19-Mengandung-Magnet-6.jpeg"
+                  caption_prompt: "Jika ada teks di gambar, kutip teksnya terlebih dahulu. Kemudian deskripsikan isi gambar dalam satu paragraf menggunakan Bahasa Indonesia."
                   max_new_tokens: 256
       responses:
         '200':
